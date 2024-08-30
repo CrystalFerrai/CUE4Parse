@@ -53,7 +53,7 @@ namespace CUE4Parse.UE4.Assets.Readers
             var nameIndex = Read<int>();
             var index = Read<int>();
             Position = savedPos;
-            return nameIndex >= 0 && nameIndex < Owner!.NameMap.Length && index >= 0 && index < 256;
+            return nameIndex >= 0 && nameIndex < Owner!.NameMap.Length && index >= 0 && index < 2048;
         }
 
         // TODO not really optimal, there should be TryReadObject functions etc
