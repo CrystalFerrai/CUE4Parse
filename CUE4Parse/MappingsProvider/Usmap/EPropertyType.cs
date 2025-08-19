@@ -31,6 +31,12 @@
         EnumProperty,
         FieldPathProperty,
         OptionalProperty,
+        Utf8StrProperty,
+        AnsiStrProperty,
+        
+        ClassProperty,
+        MulticastInlineDelegateProperty,
+        SoftClassProperty,
 
         Unknown = 0xFF
     }

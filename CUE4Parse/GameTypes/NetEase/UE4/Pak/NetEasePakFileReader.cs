@@ -1,10 +1,12 @@
 // ReSharper disable CheckNamespace
+
 using System;
 using System.Linq;
 using System.Text;
 using CUE4Parse.Encryption.Aes;
 using CUE4Parse.UE4.Pak.Objects;
 using CUE4Parse.UE4.Readers;
+using CUE4Parse.UE4.Versions;
 using CUE4Parse.Utils;
 using static CUE4Parse.Compression.Compression;
 
@@ -24,25 +26,31 @@ public partial class PakFileReader
     {
         var uncompressed = new byte[(int) pakEntry.UncompressedSize];
         var uncompressedOff = 0;
-        var limit = reader.Game == UE4.Versions.EGame.GAME_MarvelRivals ? CalculateEncryptedBytesCountForMarvelRivals(pakEntry) : 0x1000;
+        var limit = Game switch
+        {
+            EGame.GAME_MarvelRivals => CalculateEncryptedBytesCountForMarvelRivals(pakEntry),
+            EGame.GAME_OperationApocalypse or EGame.GAME_MindsEye => 0x1000,
+            EGame.GAME_WutheringWaves => pakEntry.Path.EndsWith("ini") ? int.MaxValue : 0x800,
+            _ => throw new ArgumentOutOfRangeException(nameof(reader.Game), "Unsupported game for partial encrypted pak entry extraction")
+        };
 
         Span<byte> compressedBuffer = stackalloc byte[pakEntry.CompressionBlocks.Max(block => (int) block.Size.Align(pakEntry.IsEncrypted ? Aes.ALIGN : 1))];
 
         foreach (var block in pakEntry.CompressionBlocks)
         {
-            reader.Position = block.CompressedStart;
             var blockSize = (int) block.Size;
             var srcSize = blockSize.Align(pakEntry.IsEncrypted ? Aes.ALIGN : 1);
 
             // Read the encrypted block
             var compressed = compressedBuffer[..srcSize];
-            ReadAndDecrypt(blockSize < limit && limit > 0 ? srcSize : limit, reader, pakEntry.IsEncrypted).CopyTo(compressed);
+            var bytesToRead = blockSize < limit && limit > 0 ? srcSize : limit;
+            ReadAndDecryptAt(block.CompressedStart, bytesToRead, reader, pakEntry.IsEncrypted).CopyTo(compressed);
 
             // Remaining size is unencrypted
             if (blockSize > limit)
             {
                 var diff = blockSize - limit;
-                reader.ReadBytes(diff).CopyTo(compressed[limit..]);
+                reader.ReadBytesAt(block.CompressedStart + bytesToRead, diff).CopyTo(compressed[limit..]);
                 limit = srcSize;
             }
 
@@ -60,16 +68,23 @@ public partial class PakFileReader
 
     private byte[] NetEaseExtract(FArchive reader, FPakEntry pakEntry)
     {
-        var limit = reader.Game == UE4.Versions.EGame.GAME_MarvelRivals ? CalculateEncryptedBytesCountForMarvelRivals(pakEntry) : 0x1000;
-        reader.Position = pakEntry.Offset + pakEntry.StructSize;
+        var limit = Game switch
+        {
+            EGame.GAME_MarvelRivals => CalculateEncryptedBytesCountForMarvelRivals(pakEntry),
+            EGame.GAME_OperationApocalypse or EGame.GAME_MindsEye => 0x1000,
+            EGame.GAME_WutheringWaves => 0x800,
+            _ => throw new ArgumentOutOfRangeException(nameof(reader.Game), "Unsupported game for partial encrypted pak entry extraction")
+        };
         var size = (int) pakEntry.UncompressedSize.Align(pakEntry.IsEncrypted ? Aes.ALIGN : 1);
-        var encrypted = ReadAndDecrypt(size <= limit ? size : limit, reader, pakEntry.IsEncrypted);
+        var bytesToRead = size <= limit ? size : limit;
+        var encrypted = ReadAndDecryptAt(pakEntry.Offset + pakEntry.StructSize, bytesToRead, reader, pakEntry.IsEncrypted);
 
         if (size > limit)
         {
-            var decrypted = reader.ReadBytes((int) pakEntry.UncompressedSize - limit);
+            var decrypted = reader.ReadBytesAt(pakEntry.Offset + pakEntry.StructSize + bytesToRead, (int) pakEntry.UncompressedSize - limit);
             return encrypted.Concat(decrypted).ToArray();
         }
+
         return encrypted[..(int) pakEntry.UncompressedSize];
     }
 
@@ -80,9 +95,7 @@ public partial class PakFileReader
         var initialSeedBytes = BitConverter.GetBytes(0x44332211);
         hasher.Update(initialSeedBytes);
 
-        var mountPoint = pakEntry.Vfs.MountPoint;
-        var assetPath = (mountPoint.Length == 0 ? pakEntry.Path : pakEntry.Path.Substring(mountPoint.Length)).ToLower();
-        var assetPathBytes = Encoding.UTF8.GetBytes(assetPath);
+        var assetPathBytes = Encoding.UTF8.GetBytes(pakEntry.Path.ToLower());
         hasher.Update(assetPathBytes);
 
         var finalHash = hasher.Finalize().AsSpan();
@@ -91,6 +104,6 @@ public partial class PakFileReader
 
         var final = (63 * (firstU64 % 0x3D) + 319) & 0xFFFFFFFFFFFFFFC0u;
 
-        return (int)final;
+        return (int) final;
     }
 }

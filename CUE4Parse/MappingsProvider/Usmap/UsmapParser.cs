@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
@@ -114,7 +115,7 @@ public class UsmapParser
         }
 
         var structCount = Ar.Read<uint>();
-        var structs = new Dictionary<string, Struct>();
+        var structs = new Dictionary<string, Struct>(StringComparer.OrdinalIgnoreCase);
 
         var mappings = new TypeMappings(structs, enums);
 
@@ -125,5 +126,6 @@ public class UsmapParser
         }
 
         Mappings = mappings;
+        archive.Dispose();
     }
 }

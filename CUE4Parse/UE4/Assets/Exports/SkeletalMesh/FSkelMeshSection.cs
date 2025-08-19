@@ -1,9 +1,9 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using CUE4Parse.UE4.Assets.Readers;
 using CUE4Parse.UE4.Objects.Core.Math;
 using CUE4Parse.UE4.Objects.Engine;
+using CUE4Parse.UE4.Readers;
 using CUE4Parse.UE4.Versions;
 using Newtonsoft.Json;
 using Serilog;
@@ -54,17 +54,17 @@ public class FSkelMeshSection
         bCastShadow = true;
         bVisibleInRayTracing = true;
         CorrespondClothSectionIndex = -1;
-        SoftVertices = Array.Empty<FSoftVertex>();
-        ClothMappingDataLODs = Array.Empty<FMeshToMeshVertData[]>();
-        BoneMap = Array.Empty<ushort>();
+        SoftVertices = [];
+        ClothMappingDataLODs = [];
+        BoneMap = [];
         MaxBoneInfluences = 4;
-        OverlappingVertices = new Dictionary<int, int[]>();
+        OverlappingVertices = [];
         GenerateUpToLodIndex = -1;
         OriginalDataSectionIndex = -1;
         ChunkedParentSectionIndex = -1;
     }
 
-    public FSkelMeshSection(FAssetArchive Ar) : this()
+    public FSkelMeshSection(FArchive Ar, bool IsFilterEditorOnly = false) : this()
     {
         var stripDataFlags = Ar.Read<FStripDataFlags>();
         var skelMeshVer = FSkeletalMeshCustomVersion.Get(Ar);
@@ -76,7 +76,7 @@ public class FSkelMeshSection
             var dummyChunkIndex = Ar.Read<ushort>();
         }
 
-        if (!stripDataFlags.IsDataStrippedForServer())
+        if (!stripDataFlags.IsAudioVisualDataStripped())
         {
             BaseIndex = Ar.Read<int>();
             NumTriangles = Ar.Read<int>();
@@ -105,6 +105,8 @@ public class FSkelMeshSection
             var dummyEnableClothLOD = Ar.Read<byte>();
         }
 
+        if (Ar.Game == EGame.GAME_DaysGone) return;
+
         if (FRecomputeTangentCustomVersion.Get(Ar) >= FRecomputeTangentCustomVersion.Type.RuntimeRecomputeTangent)
         {
             bRecomputeTangent = Ar.ReadBoolean();
@@ -118,12 +120,12 @@ public class FSkelMeshSection
 
         if (skelMeshVer >= FSkeletalMeshCustomVersion.Type.CombineSectionWithChunk)
         {
-            if (!stripDataFlags.IsDataStrippedForServer())
+            if (!stripDataFlags.IsAudioVisualDataStripped())
             {
                 BaseVertexIndex = Ar.Read<uint>();
             }
 
-            if (!stripDataFlags.IsEditorDataStripped() && !Ar.IsFilterEditorOnly)
+            if (!stripDataFlags.IsEditorDataStripped() && !IsFilterEditorOnly)
             {
                 if (skelMeshVer < FSkeletalMeshCustomVersion.Type.CombineSoftAndRigidVerts)
                 {
@@ -236,10 +238,12 @@ public class FSkelMeshSection
         bRecomputeTangent = Ar.ReadBoolean();
         RecomputeTangentsVertexMaskChannel = FRecomputeTangentCustomVersion.Get(Ar) >= FRecomputeTangentCustomVersion.Type.RecomputeTangentVertexColorMask ? Ar.Read<ESkinVertexColorChannel>() : ESkinVertexColorChannel.None;
         if (Ar.Game == EGame.GAME_DeltaForceHawkOps) Ar.Position += 3;
+        if (Ar.Game == EGame.GAME_BigRumbleBoxingCreedChampions) Ar.Position += 4;
         bCastShadow = FEditorObjectVersion.Get(Ar) < FEditorObjectVersion.Type.RefactorMeshEditorMaterials || Ar.ReadBoolean();
+        if (Ar.Game is EGame.GAME_FinalFantasy7Rebirth or EGame.GAME_HogwartsLegacy) Ar.Position += 4;
         bVisibleInRayTracing = FUE5MainStreamObjectVersion.Get(Ar) < FUE5MainStreamObjectVersion.Type.SkelMeshSectionVisibleInRayTracingFlagAdded || Ar.ReadBoolean();
         BaseVertexIndex = Ar.Read<uint>();
-        ClothMappingDataLODs = FUE5ReleaseStreamObjectVersion.Get(Ar) < FUE5ReleaseStreamObjectVersion.Type.AddClothMappingLODBias ? new[] { Ar.ReadArray(() => new FMeshToMeshVertData(Ar)) } : Ar.ReadArray(() => Ar.ReadArray(() => new FMeshToMeshVertData(Ar)));
+        ClothMappingDataLODs = FUE5ReleaseStreamObjectVersion.Get(Ar) < FUE5ReleaseStreamObjectVersion.Type.AddClothMappingLODBias ? [Ar.ReadArray(() => new FMeshToMeshVertData(Ar))] : Ar.ReadArray(() => Ar.ReadArray(() => new FMeshToMeshVertData(Ar)));
         BoneMap = Ar.ReadArray<ushort>();
         NumVertices = Ar.Read<int>();
         MaxBoneInfluences = Ar.Read<int>();
@@ -259,20 +263,16 @@ public class FSkelMeshSection
             bDisabled = Ar.ReadBoolean();
         }
 
-        switch (Ar.Game)
+        Ar.Position += Ar.Game switch
         {
-            case EGame.GAME_OutlastTrials:
-                Ar.Position += 1;
-                break;
-            case EGame.GAME_RogueCompany or EGame.GAME_BladeAndSoul or EGame.GAME_SYNCED:
-                Ar.Position += 4;
-                break;
-            case EGame.GAME_CalabiYau or EGame.GAME_FragPunk:
-                Ar.Position += 8;
-                break;
-            case EGame.GAME_MortalKombat1:
-                Ar.Position += 12;
-                break;
-        }
+            EGame.GAME_OutlastTrials => 1,
+            EGame.GAME_RogueCompany or EGame.GAME_BladeAndSoul or EGame.GAME_SYNCED or EGame.GAME_StarWarsHunters => 4,
+            EGame.GAME_FragPunk => 8,
+            EGame.GAME_MortalKombat1 or EGame.GAME_InfinityNikki => 12,
+            EGame.GAME_FateTrigger => 15,
+            EGame.GAME_Strinova => 18,
+            EGame.GAME_SuicideSquad => 11,
+            _ => 0,
+        };
     }
 }

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+
 using CUE4Parse.Compression;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Texture;
@@ -10,15 +12,18 @@ using CUE4Parse.UE4.Exceptions;
 using CUE4Parse.UE4.Objects.Core.Misc;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Versions;
-using CUE4Parse.UE4.Wwise.Enums;
+
+using OffiUtils;
+
 using Serilog;
+
 using static CUE4Parse.Compression.Compression;
 using static CUE4Parse.UE4.Objects.Core.Misc.ECompressionFlags;
 using static CUE4Parse.UE4.Objects.UObject.FPackageFileSummary;
 
 namespace CUE4Parse.UE4.Readers
 {
-    public abstract class FArchive : Stream, ICloneable
+    public abstract class FArchive : RandomAccessStream, ICloneable
     {
         public VersionContainer Versions;
         public EGame Game
@@ -38,12 +43,44 @@ namespace CUE4Parse.UE4.Readers
         }
         public abstract string Name { get; }
 
+        public override int ReadAt(long position, byte[] buffer, int offset, int count)
+        {
+            Position = position;
+            CheckReadSize(count);
+
+            return Read(buffer, offset, count);
+        }
+
+        public override Task<int> ReadAtAsync(long position, byte[] buffer, int offset, int count,
+            CancellationToken cancellationToken = default)
+        {
+            Position = position;
+            CheckReadSize(count);
+
+            return ReadAsync(buffer, offset, count, cancellationToken);
+        }
+
+        public override ValueTask<int> ReadAtAsync(long position, Memory<byte> memory, CancellationToken cancellationToken = default)
+        {
+            Position = position;
+            CheckReadSize(memory.Length);
+
+            return ReadAsync(memory, cancellationToken);
+        }
+
         public virtual byte[] ReadBytes(int length)
         {
             CheckReadSize(length);
 
             var result = new byte[length];
             Read(result, 0, length);
+            return result;
+        }
+
+        public virtual byte[] ReadBytesAt(long position, int length)
+        {
+            var result = new byte[length];
+            ReadAt(position, result, 0, length);
             return result;
         }
 
@@ -143,7 +180,7 @@ namespace CUE4Parse.UE4.Readers
             var elementSize = Read<int>();
             var elementCount = Read<int>();
             if (elementCount == 0)
-                return Array.Empty<T>();
+                return [];
 
             var pos = Position;
             T[] array = ReadArray<T>(elementCount);
@@ -282,7 +319,7 @@ namespace CUE4Parse.UE4.Readers
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public string ReadString()
+        public virtual string ReadString()
         {
             var length = Read7BitEncodedInt();
             if (length <= 0)
@@ -294,6 +331,21 @@ namespace CUE4Parse.UE4.Readers
                 Serialize(ansiBytes, length);
                 return new string((sbyte*) ansiBytes, 0, length);
             }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SkipFString()
+        {
+            var length = Read<int>();
+            if (length == int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(length), "Archive is corrupted");
+
+            if (Math.Abs(length) > Length - Position)
+            {
+                throw new ParserException($"Invalid FString length '{length}'");
+            }
+
+            Position += length >= 0 ? length : -length * sizeof(ushort);
         }
 
         public virtual string ReadFString()
@@ -405,9 +457,16 @@ namespace CUE4Parse.UE4.Readers
                 bWasByteSwapped = (packageFileTag.CompressedSize != (long) ARCHIVE_V2_HEADER_TAG);
                 bReadCompressionFormat = true;
 
-                // read CompressionFormatToDecode
-                //FCompressionUtil.SerializeCompressorName(this, ref compressionFormatToDecode);
-                throw new NotImplementedException();
+                compressionFormatToDecode = Read<byte>() switch
+                {
+                    0 => ReadFString(),
+                    1 => "None",
+                    2 => "Oodle",
+                    3 => "Zlib",
+                    4 => "Gzip",
+                    5 => "LZ4",
+                    _ => throw new ParserException(this, $"Unknown CompressionFormatToDecode value: {compressionFormatToDecode}")
+                };
             }
             else
             {
@@ -440,7 +499,6 @@ namespace CUE4Parse.UE4.Readers
                 summary.UncompressedSize = (long) BYTESWAP_ORDER64((ulong) summary.UncompressedSize);
                 packageFileTag.UncompressedSize = (long) BYTESWAP_ORDER64((ulong) packageFileTag.UncompressedSize);
             }
-
 
             // Handle change in compression chunk size in backward compatible way.
             var loadingCompressionChunkSize = packageFileTag.UncompressedSize;

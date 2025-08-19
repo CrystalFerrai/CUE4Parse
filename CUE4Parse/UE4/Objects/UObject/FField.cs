@@ -1,4 +1,5 @@
 using CUE4Parse.UE4.Assets.Exports;
+using CUE4Parse.UE4.Assets.Objects.Properties;
 using CUE4Parse.UE4.Assets.Readers;
 using CUE4Parse.UE4.Exceptions;
 using CUE4Parse.Utils;
@@ -55,21 +56,23 @@ public class FField
         "MulticastDelegateProperty" => new FMulticastDelegateProperty(),
         "MulticastInlineDelegateProperty" => new FMulticastInlineDelegateProperty(),
         "NameProperty" => new FNameProperty(),
-        "ObjectProperty" => new FObjectProperty(),
+        "ObjectProperty" or "ObjectPtrProperty" => new FObjectProperty(),
         "SetProperty" => new FSetProperty(),
         "SoftClassProperty" => new FSoftClassProperty(),
         "SoftObjectProperty" => new FSoftObjectProperty(),
         "StrProperty" => new FStrProperty(),
+        "Utf8StrProperty" => new FUtf8StrProperty(),
         "StructProperty" => new FStructProperty(),
         "TextProperty" => new FTextProperty(),
         "UInt16Property" => new FUInt16Property(),
         "UInt32Property" => new FUInt32Property(),
         "UInt64Property" => new FUInt64Property(),
-        // "WeakObjectProperty" => new FWeakObjectProperty(),
+        "WeakObjectProperty" => new FWeakObjectProperty(),
         "OptionalProperty" => new FOptionalProperty(),
         "VerseStringProperty" => new FVerseStringProperty(),
         "VerseFunctionProperty" => new FVerseFunctionProperty(),
         "VerseDynamicProperty" => new FVerseDynamicProperty(),
+        "ReferenceProperty" => new FReferenceProperty(),
         _ => throw new ParserException("Unsupported serialized property type " + fieldTypeName)
     };
 

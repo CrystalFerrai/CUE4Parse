@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using CUE4Parse.UE4.Assets.Exports.Animation;
 using CUE4Parse.UE4.Assets.Exports.Nanite;
 using CUE4Parse.UE4.Assets.Objects;
@@ -11,24 +12,27 @@ using Newtonsoft.Json;
 
 namespace CUE4Parse.UE4.Assets.Exports.SkeletalMesh;
 
-public class USkeletalMesh : UObject
+public partial class USkeletalMesh : UObject
 {
     public FBoxSphereBounds ImportedBounds { get; private set; }
     public FSkeletalMaterial[] SkeletalMaterials { get; private set; }
     public FReferenceSkeleton ReferenceSkeleton { get; private set; }
+    public FSkeletalMeshLODGroupSettings[] LODInfo { get; private set; }
     public FStaticLODModel[]? LODModels { get; private set; }
     public bool bHasVertexColors { get; private set; }
     public byte NumVertexColorChannels { get; private set; }
     public FPackageIndex[] MorphTargets { get; private set; }
     public FPackageIndex[] Sockets { get; private set; }
     public FPackageIndex Skeleton { get; private set; }
-    public ResolvedObject?[] Materials { get; private set; } // UMaterialInterface[]
+    public ResolvedObject?[] Materials { get; private set; } = []; // UMaterialInterface[]
     public FPackageIndex PhysicsAsset { get; private set; }
+    public FPackageIndex[]? AssetUserData { get; private set; }
+    public FNaniteResources? NaniteResources;
 
     public override void Deserialize(FAssetArchive Ar, long validPos)
     {
         base.Deserialize(Ar, validPos);
-        Materials = Array.Empty<ResolvedObject>();
+        LODInfo = GetOrDefault<FSkeletalMeshLODGroupSettings[]>(nameof(LODInfo), []);
 
         bHasVertexColors = GetOrDefault<bool>(nameof(bHasVertexColors));
         NumVertexColorChannels = GetOrDefault<byte>(nameof(NumVertexColorChannels));
@@ -36,6 +40,7 @@ public class USkeletalMesh : UObject
         Sockets = GetOrDefault(nameof(Sockets), Array.Empty<FPackageIndex>());
         Skeleton = GetOrDefault(nameof(Skeleton), new FPackageIndex());
         PhysicsAsset = GetOrDefault(nameof(PhysicsAsset), new FPackageIndex());
+        AssetUserData = GetOrDefault(nameof(AssetUserData), Array.Empty<FPackageIndex>());
 
         var stripDataFlags = Ar.Read<FStripDataFlags>();
         ImportedBounds = new FBoxSphereBounds(Ar);
@@ -51,7 +56,11 @@ public class USkeletalMesh : UObject
 
         if (FSkeletalMeshCustomVersion.Get(Ar) < FSkeletalMeshCustomVersion.Type.SplitModelAndRenderData)
         {
-            LODModels = Ar.ReadArray(() => new FStaticLODModel(Ar, bHasVertexColors));
+            LODModels = Ar.Game switch
+            {
+                EGame.GAME_GameForPeace => GFPSerializeLODModels(Ar),
+                _ => Ar.ReadArray(() => new FStaticLODModel(Ar, bHasVertexColors)),
+            };
         }
         else
         {
@@ -83,10 +92,24 @@ public class USkeletalMesh : UObject
                     }
                 }
 
+                if (Ar.Game == EGame.GAME_Stalker2)
+                {
+                    var fallbackLODModels = new FStaticLODModel[Ar.Read<int>()];
+                    for (var i = 0; i < fallbackLODModels.Length; i++)
+                    {
+                        fallbackLODModels[i] = new FStaticLODModel();
+                        fallbackLODModels[i].SerializeRenderItem(Ar, bHasVertexColors, NumVertexColorChannels);
+                    }
+
+                    LODModels = LODModels.Concat(fallbackLODModels).ToArray();
+                }
+
                 if (Ar.Game >= EGame.GAME_UE5_5)
                 {
-                    var NaniteResources = new FNaniteResources(Ar);
+                    NaniteResources = new FNaniteResources(Ar);
                 }
+
+                if (Ar.Game == EGame.GAME_DeadzoneRogue) Ar.Position += 4;
 
                 if (useNewCookedFormat)
                 {
@@ -129,6 +152,12 @@ public class USkeletalMesh : UObject
     {
         if (LODModels is null || MorphTargets.Length == 0) return;
 
+        if (Owner?.Provider?.Versions.Game is EGame.GAME_MortalKombat1)
+        {
+            PopulateMorphTargetVerticesDataMK1();
+            return;
+        }
+
         var maxLodLevel = -1;
         for (int i = 0; i < LODModels.Length; i++)
         {
@@ -162,7 +191,7 @@ public class USkeletalMesh : UObject
 
             for (int j = 0; j < morphLODModels.Length; j++)
             {
-                if (morphLODModels[j].Vertices.Length > 0) continue;
+                if (morphLODModels[j].Vertices.Length > 0 || morphLODModels[j].NumBaseMeshVerts == 0 || morphLODModels[j].SectionIndices.Length == 0) continue;
                 morphLODModels[j] = new FMorphTargetLODModel(LODModels[j].MorphTargetVertexInfoBuffers!, index, morphLODModels[j].SectionIndices);
             }
 
@@ -183,13 +212,16 @@ public class USkeletalMesh : UObject
     {
         base.WriteJson(writer, serializer);
 
-        writer.WritePropertyName("ImportedBounds");
+        writer.WritePropertyName(nameof(ImportedBounds));
         serializer.Serialize(writer, ImportedBounds);
 
-        writer.WritePropertyName("SkeletalMaterials");
+        writer.WritePropertyName(nameof(SkeletalMaterials));
         serializer.Serialize(writer, SkeletalMaterials);
 
-        writer.WritePropertyName("LODModels");
+        writer.WritePropertyName(nameof(LODModels));
         serializer.Serialize(writer, LODModels);
+
+        writer.WritePropertyName(nameof(NaniteResources));
+        serializer.Serialize(writer, NaniteResources);
     }
 }
