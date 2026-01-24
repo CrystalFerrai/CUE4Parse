@@ -45,6 +45,7 @@ public class FSkelMeshSection
     public int GenerateUpToLodIndex;
     public int OriginalDataSectionIndex;
     public int ChunkedParentSectionIndex;
+    public int? CustomData;
 
     public bool HasClothData => ClothMappingDataLODs.Any(data => data.Length > 0);
 
@@ -66,7 +67,7 @@ public class FSkelMeshSection
 
     public FSkelMeshSection(FArchive Ar, bool IsFilterEditorOnly = false) : this()
     {
-        var stripDataFlags = Ar.Read<FStripDataFlags>();
+        var stripDataFlags = new FStripDataFlags(Ar);
         var skelMeshVer = FSkeletalMeshCustomVersion.Get(Ar);
 
         MaterialIndex = Ar.Read<short>();
@@ -229,8 +230,8 @@ public class FSkelMeshSection
     // Reference: FArchive& operator<<(FArchive& Ar, FSkelMeshRenderSection& S)
     public void SerializeRenderItem(FAssetArchive Ar)
     {
-        var stripDataFlags = Ar.Read<FStripDataFlags>();
-
+        var stripDataFlags = new FStripDataFlags(Ar);
+        if (Ar.Game == EGame.GAME_Raven2) Ar.Position += 4;
         MaterialIndex = Ar.Read<short>();
         BaseIndex = Ar.Read<int>();
         NumTriangles = Ar.Read<int>();
@@ -240,7 +241,7 @@ public class FSkelMeshSection
         if (Ar.Game == EGame.GAME_DeltaForceHawkOps) Ar.Position += 3;
         if (Ar.Game == EGame.GAME_BigRumbleBoxingCreedChampions) Ar.Position += 4;
         bCastShadow = FEditorObjectVersion.Get(Ar) < FEditorObjectVersion.Type.RefactorMeshEditorMaterials || Ar.ReadBoolean();
-        if (Ar.Game is EGame.GAME_FinalFantasy7Rebirth or EGame.GAME_HogwartsLegacy) Ar.Position += 4;
+        if (Ar.Game is EGame.GAME_FinalFantasy7Rebirth or EGame.GAME_HogwartsLegacy or EGame.GAME_Snowbreak) Ar.Position += 4;
         bVisibleInRayTracing = FUE5MainStreamObjectVersion.Get(Ar) < FUE5MainStreamObjectVersion.Type.SkelMeshSectionVisibleInRayTracingFlagAdded || Ar.ReadBoolean();
         BaseVertexIndex = Ar.Read<uint>();
         ClothMappingDataLODs = FUE5ReleaseStreamObjectVersion.Get(Ar) < FUE5ReleaseStreamObjectVersion.Type.AddClothMappingLODBias ? [Ar.ReadArray(() => new FMeshToMeshVertData(Ar))] : Ar.ReadArray(() => Ar.ReadArray(() => new FMeshToMeshVertData(Ar)));
@@ -263,12 +264,14 @@ public class FSkelMeshSection
             bDisabled = Ar.ReadBoolean();
         }
 
+        if (Ar.Game is EGame.GAME_InfinityNikki) CustomData = Ar.Read<int>();
+
         Ar.Position += Ar.Game switch
         {
             EGame.GAME_OutlastTrials => 1,
             EGame.GAME_RogueCompany or EGame.GAME_BladeAndSoul or EGame.GAME_SYNCED or EGame.GAME_StarWarsHunters => 4,
-            EGame.GAME_FragPunk => 8,
-            EGame.GAME_MortalKombat1 or EGame.GAME_InfinityNikki => 12,
+            EGame.GAME_FragPunk or EGame.GAME_InfinityNikki => 8,
+            EGame.GAME_MortalKombat1 => 12,
             EGame.GAME_FateTrigger => 15,
             EGame.GAME_Strinova => 18,
             EGame.GAME_SuicideSquad => 11,

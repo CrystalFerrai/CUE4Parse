@@ -29,7 +29,7 @@ public class USceneComponent : UActorComponent
     public override void Deserialize(FAssetArchive Ar, long validPos)
     {
         base.Deserialize(Ar, validPos);
-
+        if (Ar.Game == EGame.GAME_WorldofJadeDynasty) Ar.Position += 4;
         var bComputeBoundsOnceForGame = GetOrDefault<bool>("bComputeBoundsOnceForGame");
         var bComputedBoundsOnceForGame = GetOrDefault<bool>("bComputedBoundsOnceForGame");
         var bComputeBounds = bComputeBoundsOnceForGame || bComputedBoundsOnceForGame;
@@ -41,7 +41,34 @@ public class USceneComponent : UActorComponent
         }
     }
 
-    public FTransform GetRelativeTransform() => new(GetRelativeRotation(), GetRelativeLocation(), GetRelativeScale3D());
+    // public FTransform GetRelativeTransform() => new(GetRelativeRotation(), GetRelativeLocation(), GetRelativeScale3D());
+    public FTransform GetRelativeTransform()
+    {
+        var current = this;
+        FVector? topMostScale = null;
+
+        while (current != null)
+        {
+            var foundLoc = current.TryGetValue(out FVector loc, "RelativeLocation");
+            var foundRot = current.TryGetValue(out FRotator rot, "RelativeRotation");
+            var foundScale = current.TryGetValue(out FVector scale, "RelativeScale3D");
+
+            // keep the top-most scale if found
+            if (foundScale && topMostScale == null)
+            {
+                topMostScale = scale;
+            }
+
+            if (foundLoc || foundRot)
+            {
+                return new FTransform(foundRot ? rot : FRotator.ZeroRotator, foundLoc ? loc : FVector.ZeroVector, topMostScale ?? FVector.OneVector);
+            }
+
+            current = current.Template?.Load<USceneComponent>();
+        }
+
+        return new FTransform(FRotator.ZeroRotator, FVector.ZeroVector, FVector.OneVector);
+    }
 
     public FTransform GetAbsoluteTransform()
     {
@@ -90,22 +117,15 @@ public class USceneComponent : UActorComponent
         return GetComponentToWorld();
     }
 
-    public FVector GetRelativeLocation() => DeepGet("RelativeLocation", FVector.ZeroVector);
-    public FRotator GetRelativeRotation() => DeepGet("RelativeRotation", FRotator.ZeroRotator);
+    public FVector GetRelativeLocation() => GetOrDefault("RelativeLocation", FVector.ZeroVector);
+    public FRotator GetRelativeRotation() => GetOrDefault("RelativeRotation", FRotator.ZeroRotator);
     public FVector GetRelativeScale3D() => GetOrDefault("RelativeScale3D", FVector.OneVector);
 
-    private T DeepGet<T>(string name, T fallback)
+    public void AddLocalRotation(FRotator deltaRotation)
     {
-        var ret = default(T);
-        var current = this;
-        while (true)
-        {
-            if (current is null) break;
-            if (current.TryGetValue(out ret, name)) break;
-            if (current.Template == null) break;
-            current = current.Template.Load<USceneComponent>();
-        }
-        return ret ?? fallback;
+        var curRelRotQuat = GetRelativeRotation().Quaternion();
+        var newRelRotQuat = curRelRotQuat * deltaRotation.Quaternion();
+        PropertyUtil.Set(this, "RelativeRotation", newRelRotQuat.Rotator());
     }
 
     protected internal override void WriteJson(JsonWriter writer, JsonSerializer serializer)

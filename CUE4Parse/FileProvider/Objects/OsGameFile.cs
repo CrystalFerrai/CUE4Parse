@@ -1,6 +1,7 @@
 ﻿using System.IO;
 using System.Runtime.CompilerServices;
 using CUE4Parse.Compression;
+using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Versions;
 
 namespace CUE4Parse.FileProvider.Objects
@@ -10,7 +11,7 @@ namespace CUE4Parse.FileProvider.Objects
         public readonly FileInfo ActualFile;
 
         public OsGameFile(DirectoryInfo baseDir, FileInfo info, string mountPoint, VersionContainer versions)
-            : base(mountPoint + info.FullName.Substring(baseDir.FullName.Length + 1).Replace('\\', '/'), info.Length, versions)
+            : base(System.IO.Path.GetRelativePath(baseDir.FullName, info.FullName).Replace('\\', '/'), info.Length, versions)
         {
             ActualFile = info;
         }
@@ -19,6 +20,6 @@ namespace CUE4Parse.FileProvider.Objects
         public override CompressionMethod CompressionMethod => CompressionMethod.None;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override byte[] Read() => File.ReadAllBytes(ActualFile.FullName);
+        public override byte[] Read(FByteBulkDataHeader? header = null) => File.ReadAllBytes(ActualFile.FullName);
     }
 }

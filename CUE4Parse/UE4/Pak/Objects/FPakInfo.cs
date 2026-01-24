@@ -23,7 +23,7 @@ public enum EPakFileVersion
     PakFile_Version_FrozenIndex = 9,
     PakFile_Version_PathHashIndex = 10,
     PakFile_Version_Fnv64BugFix = 11,
-
+    PakFile_Version_Utf8PakDirectory = 12,
 
     PakFile_Version_Last,
     PakFile_Version_Invalid,
@@ -44,6 +44,8 @@ public partial class FPakInfo
     public const uint PAK_FILE_MAGIC_RacingMaster = 0x9a51da3f;
     public const uint PAK_FILE_MAGIC_CrystalOfAtlan = 0x22ce976a;
     public const uint PAK_FILE_MAGIC_PromiseMascotAgency = 0x11adde11;
+    public const uint PAK_FILE_MAGIC_ArenaBreakoutInfinite = 0x53647586;
+    public const uint PAK_FILE_MAGIC_AssaultFireFuture = 0x4F6FAE86;
 
     public const int COMPRESSION_METHOD_NAME_LEN = 32;
 
@@ -99,6 +101,32 @@ public partial class FPakInfo
                 CompressionMethod.LZ4, CompressionMethod.Zstd
             ];
             return;
+        }
+
+        if (Ar.Game == EGame.GAME_ArenaBreakoutInfinite)
+        {
+            EncryptionKeyGuid = Ar.Read<FGuid>();
+            Magic = Ar.Read<uint>();
+            if (Magic != PAK_FILE_MAGIC_ArenaBreakoutInfinite) return;
+            EncryptedIndex = Ar.Read<byte>() != 0;
+            IndexSize = Ar.Read<long>();
+            IndexOffset = Ar.Read<long>();
+            IndexHash = new FSHAHash(Ar);
+            Version = Ar.Read<EPakFileVersion>();
+            goto beforeCompression;
+        }
+
+        if (Ar.Game == EGame.GAME_DragonQuestXI)
+        {
+            EncryptionKeyGuid = default;
+            EncryptedIndex = Ar.Read<byte>() != 0;
+            Magic = Ar.Read<uint>();
+            if (Magic != PAK_FILE_MAGIC) return;
+            Version = Ar.Read<EPakFileVersion>();
+            IndexOffset = Ar.Read<long>();
+            IndexSize = Ar.Read<long>();
+            IndexHash = new FSHAHash(Ar);
+            goto beforeCompression;
         }
 
         if (Ar.Game == EGame.GAME_RacingMaster)
@@ -174,6 +202,7 @@ public partial class FPakInfo
                 Ar.Game == EGame.GAME_Undawn && Magic == PAK_FILE_MAGIC_Gameloop_Undawn ||
                 Ar.Game == EGame.GAME_FridayThe13th && Magic == PAK_FILE_MAGIC_FridayThe13th ||
                 Ar.Game == EGame.GAME_DreamStar && Magic == PAK_FILE_MAGIC_DreamStar ||
+                Ar.Game == EGame.GAME_AssaultFireFuture && Magic == PAK_FILE_MAGIC_AssaultFireFuture ||
                 Ar.Game == EGame.GAME_KartRiderDrift && Magic == PAK_FILE_MAGIC_KartRiderDrift)
                 goto afterMagic;
             // Stop immediately when magic is wrong
@@ -219,12 +248,12 @@ public partial class FPakInfo
         IndexSize = Ar.Read<long>();
         IndexHash = new FSHAHash(Ar);
 
-        if (Ar.Game == EGame.GAME_DreamStar)
+        if (Ar.Game is EGame.GAME_DreamStar or EGame.GAME_AssaultFireFuture)
         {
             (IndexOffset, IndexSize) = (IndexSize, IndexOffset);
         }
 
-        if (Ar.Game == EGame.GAME_MeetYourMaker && offsetToTry == OffsetsToTry.SizeHotta && Version >= EPakFileVersion.PakFile_Version_Latest)
+        if (Ar.Game == EGame.GAME_MeetYourMaker && offsetToTry == OffsetsToTry.SizeHotta && Version >= EPakFileVersion.PakFile_Version_Fnv64BugFix)
         {
             var mymVersion = Ar.Read<uint>(); // I assume this is a version, only 0 right now.
         }
@@ -395,7 +424,7 @@ public partial class FPakInfo
                 EGame.GAME_DeadByDaylight or EGame.GAME_DeadByDaylight_Old => [OffsetsToTry.SizeDbD],
                 EGame.GAME_Farlight84 => [OffsetsToTry.SizeFarlight],
                 EGame.GAME_QQ or EGame.GAME_DreamStar => [OffsetsToTry.SizeDreamStar, OffsetsToTry.SizeQQ],
-                EGame.GAME_GameForPeace => [OffsetsToTry.SizeGameForPeace],
+                EGame.GAME_GameForPeace or EGame.GAME_DragonQuestXI => [OffsetsToTry.SizeGameForPeace],
                 EGame.GAME_BlackMythWukong => [OffsetsToTry.SizeB1],
                 EGame.GAME_Rennsport => [OffsetsToTry.SizeRennsport],
                 EGame.GAME_RacingMaster => [OffsetsToTry.SizeRacingMaster],
@@ -436,6 +465,8 @@ public partial class FPakInfo
                     EGame.GAME_CrystalOfAtlan when info.Magic == PAK_FILE_MAGIC_CrystalOfAtlan => true,
                     EGame.GAME_PromiseMascotAgency when info.Magic == PAK_FILE_MAGIC_PromiseMascotAgency => true,
                     EGame.GAME_WildAssault when info.Magic == PAK_FILE_MAGIC_WildAssault => true,
+                    EGame.GAME_ArenaBreakoutInfinite when info.Magic == PAK_FILE_MAGIC_ArenaBreakoutInfinite => true,
+                    EGame.GAME_AssaultFireFuture when info.Magic == PAK_FILE_MAGIC_AssaultFireFuture => true,
                     _ => info.Magic == PAK_FILE_MAGIC
                 };
                 if (found) return info;
