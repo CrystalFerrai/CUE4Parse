@@ -71,4 +71,15 @@ public class FCustomVersionContainer
 
         return -1;
     }
+
+    public static ECustomVersionSerializationFormat DetermineSerializationFormat(int legacyVersion)
+    {
+        return legacyVersion switch
+        {
+            -2 => ECustomVersionSerializationFormat.Enums,
+            < -2 and >= -5 => ECustomVersionSerializationFormat.Guids,
+            < -5 => ECustomVersionSerializationFormat.Optimized,
+            _ => ECustomVersionSerializationFormat.Unknown
+        };
+    }
 }

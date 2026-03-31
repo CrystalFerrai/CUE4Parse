@@ -107,7 +107,7 @@ namespace CUE4Parse.GameTypes.FN.Assets.Exports
                 if (obj != null)
                 {
                     var pathName = obj.GetPathName();
-                    ActorClass = new FSoftObjectPath(pathName.SubstringBeforeLast(':'), ""); // TODO SubPathString
+                    ActorClass = new FSoftObjectPath(pathName.SubstringBeforeLast(':'), pathName.SubstringAfterLast(':'));
                 }
                 else
                 {
@@ -194,7 +194,7 @@ namespace CUE4Parse.GameTypes.FN.Assets.Exports
                 if (obj != null)
                 {
                     var pathName = obj.GetPathName();
-                    ComponentClass = new FSoftObjectPath(pathName.SubstringBeforeLast(':'), ""); // TODO SubPathString
+                    ComponentClass = new FSoftObjectPath(pathName.SubstringBeforeLast(':'), pathName.SubstringAfterLast(':'));
                 }
                 else
                 {
@@ -370,7 +370,7 @@ namespace CUE4Parse.GameTypes.FN.Assets.Exports
                 {
                     var templateRecord = kv.Value?.GetValue<FActorTemplateRecord>();
                     if (templateRecord is null) continue;
-                    
+
                     var templateIndex = kv.Key.GetValue<int>();
                     TemplateRecords[templateIndex] = templateRecord;
                     ActorData.Add(templateRecord.ReadActorData(Owner, SaveVersion));
@@ -478,7 +478,11 @@ namespace CUE4Parse.GameTypes.FN.Assets.Exports
                 writer.WriteValue(PlayerPersistenceUserWipeNumber);
             }
 
-            // TODO VkPalette
+            if (VkPalette?.LinkCodeMap is { Count: > 0 })
+            {
+                writer.WritePropertyName("VkPalette");
+                serializer.Serialize(writer, VkPalette);
+            }
         }
 
         public void ReadFromArchive(FArchive Ar)

@@ -1,5 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 using CUE4Parse.Compression;
+using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Readers;
 using CUE4Parse.UE4.VirtualFileSystem;
 
@@ -18,13 +19,22 @@ namespace CUE4Parse.UE4.IO.Objects
             }
         }
 
-        public readonly uint TocEntryIndex;
-        public FIoChunkId ChunkId => IoStoreReader.TocResource.ChunkIds[TocEntryIndex];
+        private readonly uint _tocEntryIndex;
+        public FIoChunkId ChunkId => IoStoreReader.TocResource.ChunkIds[_tocEntryIndex];
 
-        public FIoStoreEntry(IoStoreReader reader, string path, uint tocEntryIndex) : base(reader)
+        public FIoStoreEntry(IoStoreReader reader, string path, uint tocEntryIndex) : base(reader, path)
         {
-            Path = path;
-            TocEntryIndex = tocEntryIndex;
+            _tocEntryIndex = tocEntryIndex;
+            ref var offsetLength = ref reader.TocResource.ChunkOffsetLengths[tocEntryIndex];
+            Offset = (long) offsetLength.Offset;
+            Size = (long) offsetLength.Length;
+        }
+
+        public FIoStoreEntry(IoStoreReader reader, uint tocEntryIndex) : base(reader, "NonIndexed/")
+        {
+            _tocEntryIndex = tocEntryIndex;
+            Path += $"0x{ChunkId.ChunkId:X8}.{ChunkId.GetExtension(reader)}";
+
             ref var offsetLength = ref reader.TocResource.ChunkOffsetLengths[tocEntryIndex];
             Offset = (long) offsetLength.Offset;
             Size = (long) offsetLength.Length;
@@ -36,9 +46,10 @@ namespace CUE4Parse.UE4.IO.Objects
             get => (IoStoreReader) Vfs;
         }
 
-        public override byte[] Read() => Vfs.Extract(this);
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public override byte[] Read(FByteBulkDataHeader? header = null) => Vfs.Extract(this, header);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override FArchive CreateReader() => new FByteArchive(Path, Read(), Vfs.Versions);
+        public override FArchive CreateReader(FByteBulkDataHeader? header = null) => new FByteArchive(Path, Read(header), Vfs.Versions);
     }
 }

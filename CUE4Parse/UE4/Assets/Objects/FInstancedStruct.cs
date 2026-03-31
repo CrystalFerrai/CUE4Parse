@@ -1,14 +1,20 @@
+using CUE4Parse.GameTypes.AoC.Objects;
+using CUE4Parse.UE4.Assets.Objects.Properties;
 using CUE4Parse.UE4.Assets.Readers;
+using CUE4Parse.UE4.Exceptions;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Versions;
 using Newtonsoft.Json;
+using Serilog;
 
 namespace CUE4Parse.UE4.Assets.Objects;
 
 [JsonConverter(typeof(FInstancedStructConverter))]
 public class FInstancedStruct : IUStruct
 {
-    public readonly FStructFallback? NonConstStruct;
+    public FStructFallback NonConstStruct => NonConstIUSturct as FStructFallback ?? new FStructFallback();
+    public readonly IUStruct? NonConstIUSturct;
+    public readonly string? StringData;
 
     public FInstancedStruct(FAssetArchive Ar)
     {
@@ -26,23 +32,47 @@ public class FInstancedStruct : IUStruct
             _ = Ar.Read<byte>(); // Old Version
         }
 
+        if (Ar.Game is EGame.GAME_VEIN)
+        {
+            StringData = Ar.ReadFString();
+            return;
+        }
+
+        if (Ar.Game is EGame.GAME_AshesOfCreation && Ar is FAoCDBCReader AoCReader)
+        {
+            NonConstIUSturct = AoCReader.ReadInstancedStruct();
+            return;
+        }
+
         var strucindex = new FPackageIndex(Ar);
         var serialSize = Ar.Read<int>();
         var savedPos = Ar.Position;
-        if (strucindex.TryLoad<UStruct>(out var struc))
+
+        if (strucindex.IsNull)
         {
-            try
+            Ar.Position = savedPos + serialSize;
+            return;
+        }
+
+        try
+        {
+            var structName = strucindex.ResolvedObject is { } obj ? obj.Name.ToString() : null;
+            if (strucindex.TryLoad<UStruct>(out var struc) || structName != null)
             {
-                NonConstStruct = new FStructFallback(Ar, struc);
+                NonConstIUSturct = new FScriptStruct(Ar, structName, struc, ReadType.NORMAL).StructType;
             }
-            catch
+            else
             {
-                Ar.Position = savedPos + serialSize;
+                Log.Warning("Failed to read FInstancedStruct of type {0}, skipping it", strucindex.ResolvedObject?.GetFullName());
             }
         }
-        else
+        catch (ParserException e)
         {
-            Ar.Position += serialSize;
+            Log.Warning(e, "Failed to read FInstancedStruct of type {0}, skipping it", strucindex.ResolvedObject?.GetFullName());
+        }
+        finally
+        {
+            Ar.Position = savedPos + serialSize;
         }
     }
 }

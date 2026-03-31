@@ -14,14 +14,22 @@ namespace CUE4Parse.UE4.Assets.Exports.StaticMesh
         public FName MaterialSlotName;
         public FName ImportedMaterialSlotName;
         public FMeshUVChannelInfo? UVChannelData;
+        public FPackageIndex OverlayMaterialInterface;
 
         public FStaticMaterial(FAssetArchive Ar)
         {
             MaterialInterface = new FPackageIndex(Ar).ResolvedObject;
             MaterialSlotName = Ar.ReadFName();
+
             if (FRenderingObjectVersion.Get(Ar) >= FRenderingObjectVersion.Type.TextureStreamingMeshUVChannelData)
                 UVChannelData = new FMeshUVChannelInfo(Ar);
-            if (Ar.Game is EGame.GAME_FragPunk) Ar.Position += 4;
+
+            if (FFortniteMainBranchObjectVersion.Get(Ar) >= FFortniteMainBranchObjectVersion.Type.MeshMaterialSlotOverlayMaterialAdded)
+            {
+                OverlayMaterialInterface = new FPackageIndex(Ar);
+            }
+
+            if (Ar.Game is EGame.GAME_FragPunk or EGame.GAME_WorldofJadeDynasty) Ar.Position += 4;
         }
 
         public FStaticMaterial(FStructFallback fallback)

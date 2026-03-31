@@ -12,6 +12,7 @@ using CUE4Parse.UE4.Exceptions;
 using CUE4Parse.UE4.Objects.Core.Misc;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Versions;
+using CUE4Parse.Utils;
 using Newtonsoft.Json;
 using Serilog;
 
@@ -43,46 +44,81 @@ public interface IPropertyHolder
     public bool TryGetAllValues<T>(out T[] obj, string name);
 }
 
+public abstract class AbstractPropertyHolder : IPropertyHolder
+{
+    public List<FPropertyTag> Properties { get; protected set; } = new();
+
+    public T GetOrDefault<T>(string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal) =>
+        PropertyUtil.GetOrDefault(this, name, defaultValue, comparisonType);
+
+    public Lazy<T> GetOrDefaultLazy<T>(string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal) =>
+        PropertyUtil.GetOrDefaultLazy(this, name, defaultValue, comparisonType);
+
+    public T Get<T>(string name, StringComparison comparisonType = StringComparison.Ordinal) =>
+        PropertyUtil.Get<T>(this, name, comparisonType);
+
+    public Lazy<T> GetLazy<T>(string name, StringComparison comparisonType = StringComparison.Ordinal) =>
+        PropertyUtil.GetLazy<T>(this, name, comparisonType);
+
+    public T GetByIndex<T>(int index) => PropertyUtil.GetByIndex<T>(this, index);
+
+    public bool TryGetValue<T>(out T obj, params string[] names)
+    {
+        foreach (string name in names)
+        {
+            if (this.TryGet<T>(name, out obj, comparisonType: StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        obj = default!;
+        return false;
+    }
+
+    public bool TryGetAllValues<T>(out T[] obj, string name)
+    {
+        var maxIndex = -1;
+        var collected = new List<FPropertyTag>();
+        foreach (var prop in Properties)
+        {
+            if (prop.Name.Text != name) continue;
+            collected.Add(prop);
+            maxIndex = Math.Max(maxIndex, prop.ArrayIndex);
+        }
+
+        obj = new T[maxIndex + 1];
+        foreach (var prop in collected) {
+            obj[prop.ArrayIndex] = (T)prop.Tag?.GetValue(typeof(T))!;
+        }
+
+        return obj.Length > 0;
+    }
+}
+
 [JsonConverter(typeof(UObjectConverter))]
 [SkipObjectRegistration]
-public class UObject : IPropertyHolder
+public class UObject : AbstractPropertyHolder
 {
     public string Name { get; set; } = null!;
-    public UObject? Outer;
-    public UStruct? Class;
+    public ResolvedObject? Class;
+    public ResolvedObject? Outer;
     public ResolvedObject? Super;
     public ResolvedObject? Template;
-    public List<FPropertyTag> Properties { get; private set; }
     public FGuid? ObjectGuid { get; private set; }
     public EObjectFlags Flags;
     public UStruct? SerializedSparseClassDataStruct;
     public FStructFallback? SerializedSparseClassData;
+    // field for any custom data
+    public object? CustomGameData;
 
     // public FObjectExport Export;
-    public IPackage? Owner
-    {
-        get
-        {
-            var top = this;
-            while (true)
-            {
-                var outer = top.Outer;
-                if (outer == null)
-                {
-                    break;
-                }
-
-                top = outer;
-            }
-
-            return top as IPackage;
-        }
-    }
-    public virtual string ExportType => Class?.Name ?? GetType().Name;
+    public IPackage? Owner => Outer?.Package;
+    public string ExportType => Class?.Name.Text ?? GetType().Name;
 
     public UObject()
     {
-        Properties = new List<FPropertyTag>();
+        Properties = [];
     }
 
     public UObject(List<FPropertyTag> properties)
@@ -96,14 +132,17 @@ public class UObject : IPropertyHolder
         {
             if (Class == null)
                 throw new ParserException(Ar, "Found unversioned properties but object does not have a class");
-            DeserializePropertiesUnversioned(Properties = [], Ar, Class);
+            if (Class.Object?.Value is not UStruct struc)
+                throw new ParserException(Ar, "Found unversioned properties but object's class is not a struct");
+
+            DeserializePropertiesUnversioned(Properties = [], Ar, struc);
         }
         else
         {
             DeserializePropertiesTagged(Properties = [], Ar, false);
         }
 
-        if (!Flags.HasFlag(EObjectFlags.RF_ClassDefaultObject) && Ar.ReadBoolean() && Ar.Position + 16 <= validPos)
+        if (Ar.Game >= EGame.GAME_UE4_0 && !Flags.HasFlag(EObjectFlags.RF_ClassDefaultObject) && Ar.ReadBoolean() && Ar.Position + 16 <= validPos)
         {
             ObjectGuid = Ar.Read<FGuid>();
         }
@@ -111,7 +150,7 @@ public class UObject : IPropertyHolder
         if (FUE5MainStreamObjectVersion.Get(Ar) < FUE5MainStreamObjectVersion.Type.SparseClassDataStructSerialization || !Flags.HasFlag(EObjectFlags.RF_ClassDefaultObject))
             return;
 
-        if (Class?.ExportType is { } type && type.EndsWith("BlueprintGeneratedClass"))
+        if (Class?.Object?.Value.ExportType is { } type && type.EndsWith("BlueprintGeneratedClass"))
         {
             SerializedSparseClassDataStruct = new FPackageIndex(Ar).Load<UStruct>();
             if (SerializedSparseClassDataStruct is null) return;
@@ -141,13 +180,15 @@ public class UObject : IPropertyHolder
         resultString.Append('\'');
     }
 
-    /**
-     * Returns the fully qualified pathname for this object, in the format:
-     * 'Outermost[.Outer].Name'
-     *
-     * @param   stopOuter   if specified, indicates that the output string should be relative to this object.  if stopOuter
-     *                      does not exist in this object's outer chain, the result would be the same as passing null.
-     */
+    /// <summary>
+    /// Returns the fully qualified pathname for this object, in the format:
+    /// 'Outermost.[Outer:]Name'
+    /// </summary>
+    /// <param name="stopOuter">
+    /// if specified, indicates that the output string should be relative to this object.
+    /// if stopOuter does not exist in this object's outer chain, the result would be the same as passing null.
+    /// </param>
+    /// <returns></returns>
     public string GetPathName(UObject? stopOuter = null)
     {
         var result = new StringBuilder();
@@ -162,12 +203,11 @@ public class UObject : IPropertyHolder
     {
         if (this != stopOuter)
         {
-            var objOuter = Outer;
-            if (objOuter != null && objOuter != stopOuter)
+            if (Outer?.TryLoad(out var objOuter) == true && objOuter != stopOuter)
             {
                 objOuter.GetPathName(stopOuter, resultString);
                 // SUBOBJECT_DELIMITER_CHAR is used to indicate that this object's outer is not a UPackage
-                resultString.Append(objOuter.Outer is IPackage ? ':' : '.');
+                resultString.Append(objOuter.Outer is ResolvedPackageObject ? ':' : '.');
             }
 
             resultString.Append(Name);
@@ -191,7 +231,7 @@ public class UObject : IPropertyHolder
         {
             if (target.IsInstanceOfType(nextOuter))
             {
-                result = nextOuter;
+                nextOuter.TryLoad(out result);
             }
         }
         return result;
@@ -294,50 +334,97 @@ public class UObject : IPropertyHolder
         }
     }
 
+    internal static void DeserializeRawProperties(List<FPropertyTag> properties, FAssetArchive Ar, UStruct struc, FRawHeader? header, ReadType readType = ReadType.NORMAL)
+    {
+        var type = struc.Name;
+        Struct? propMappings = null;
+        if (struc is UScriptClass)
+            Ar.Owner!.Mappings?.Types.TryGetValue(type, out propMappings);
+        else
+            propMappings = new SerializedStruct(Ar.Owner!.Mappings, struc);
+
+        if (propMappings is null)
+        {
+            if (Ar.HasUnversionedProperties) throw new ParserException(Ar, "Missing prop mappings for type " + type);
+            Log.Warning("Couldn't find {type} struct definition", type);
+            return;
+        }
+
+        header ??= FRawHeader.FullRead;
+
+        var readtype = readType;
+        if (readType == ReadType.RAW || header.Flags.HasFlag(ERawHeaderFlags.RawProperties))
+        {
+            readtype = ReadType.RAW;
+        }
+
+        var indices = header.BuildIndices(propMappings);
+        foreach (var index in indices)
+        {
+            if (propMappings.TryGetValue(index, out var propertyInfo))
+            {
+                if (propertyInfo.MappingType.Type is "StructProperty" && readtype is ReadType.RAW && header.Flags.HasFlag(ERawHeaderFlags.RawPropertiesExceptStructs))
+                {
+                    readtype = ReadType.NORMAL;
+                }
+                var tag = new FPropertyTag(Ar, propertyInfo, readtype);
+                if (tag.Tag != null)
+                    properties.Add(tag);
+                else
+                {
+                    throw new ParserException(Ar, $"{type}: Failed to serialize property {propertyInfo.MappingType.Type} {propertyInfo.Name}. Can't proceed with serialization (Serialized {properties.Count} properties until now)");
+                }
+            }
+            else
+            {
+                throw new ParserException(Ar, $"{type}: Unknown property with value {index}. Can't proceed with serialization (Serialized {properties.Count} properties until now)");
+            }
+        }
+    }
+
     protected internal virtual void WriteJson(JsonWriter writer, JsonSerializer serializer)
     {
-        var package = Owner;
-
-        // export type
         writer.WritePropertyName("Type");
         writer.WriteValue(ExportType);
 
-        // object name
-        writer.WritePropertyName("Name"); // ctrl click depends on the name, we always need it
+        writer.WritePropertyName(nameof(Name)); // ctrl click depends on the name, we always need it
         writer.WriteValue(Name);
 
-        // outer
-        if (Outer != null && Outer != package)
+        writer.WritePropertyName(nameof(Flags));
+        writer.WriteValue(Flags.ToStringBitfield());
+
+        if (Class is { Object.Value: { } clas })
         {
-            writer.WritePropertyName("Outer");
-            writer.WriteValue(Outer.Name); // TODO serialize the path too
+            writer.WritePropertyName(nameof(Class));
+            writer.WriteValue(clas.GetFullName());
         }
 
-        // class
-        if (Class != null)
+        if (Outer is not null && Outer is not ResolvedPackageObject)
         {
-            writer.WritePropertyName("Class");
-            writer.WriteValue(Class.GetFullName());
+            writer.WritePropertyName(nameof(Outer));
+            serializer.Serialize(writer, Outer);
+        }
+        else if (Owner is not null)
+        {
+            writer.WritePropertyName("Package");
+            writer.WriteValue(Owner.Name);
         }
 
-        // super
         if (Super != null)
         {
-            writer.WritePropertyName("Super");
+            writer.WritePropertyName(nameof(Super));
             serializer.Serialize(writer, Super);
         }
 
-        // template
         if (Template != null)
         {
-            writer.WritePropertyName("Template");
+            writer.WritePropertyName(nameof(Template));
             serializer.Serialize(writer, Template);
         }
 
-        // export properties
         if (Properties.Count > 0)
         {
-            writer.WritePropertyName("Properties");
+            writer.WritePropertyName(nameof(Properties));
             writer.WriteStartObject();
             foreach (var property in Properties)
             {
@@ -349,60 +436,12 @@ public class UObject : IPropertyHolder
 
         if (SerializedSparseClassDataStruct != null)
         {
-            writer.WritePropertyName("SerializedSparseClassDataStruct");
+            writer.WritePropertyName(nameof(SerializedSparseClassDataStruct));
             writer.WriteValue(SerializedSparseClassDataStruct.GetFullName());
 
-            writer.WritePropertyName("SerializedSparseClassData");
+            writer.WritePropertyName(nameof(SerializedSparseClassData));
             serializer.Serialize(writer, SerializedSparseClassData);
         }
-    }
-
-    public T GetOrDefault<T>(string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal) =>
-        PropertyUtil.GetOrDefault(this, name, defaultValue, comparisonType);
-
-    public Lazy<T> GetOrDefaultLazy<T>(string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal) =>
-        PropertyUtil.GetOrDefaultLazy(this, name, defaultValue, comparisonType);
-
-    public T Get<T>(string name, StringComparison comparisonType = StringComparison.Ordinal) =>
-        PropertyUtil.Get<T>(this, name, comparisonType);
-
-    public Lazy<T> GetLazy<T>(string name, StringComparison comparisonType = StringComparison.Ordinal) =>
-        PropertyUtil.GetLazy<T>(this, name, comparisonType);
-
-    public T GetByIndex<T>(int index) => PropertyUtil.GetByIndex<T>(this, index);
-
-    public bool TryGetValue<T>(out T obj, params string[] names)
-    {
-        foreach (string name in names)
-        {
-            if (GetOrDefault<T>(name, comparisonType: StringComparison.OrdinalIgnoreCase) is { } ret && !ret.Equals(default(T)))
-            {
-                obj = ret;
-                return true;
-            }
-        }
-
-        obj = default!;
-        return false;
-    }
-
-    public bool TryGetAllValues<T>(out T[] obj, string name)
-    {
-        var maxIndex = -1;
-        var collected = new List<FPropertyTag>();
-        foreach (var prop in Properties)
-        {
-            if (prop.Name.Text != name) continue;
-            collected.Add(prop);
-            maxIndex = Math.Max(maxIndex, prop.ArrayIndex);
-        }
-
-        obj = new T[maxIndex + 1];
-        foreach (var prop in collected) {
-            obj[prop.ArrayIndex] = (T)prop.Tag?.GetValue(typeof(T))!;
-        }
-
-        return obj.Length > 0;
     }
 
     // Just ignore it for the parser
@@ -446,7 +485,7 @@ public class UObject : IPropertyHolder
     /** IsFullNameStableForNetworking means an object can be referred to its full path name over the network */
     public virtual bool IsFullNameStableForNetworking()
     {
-        if (Outer != null && !Outer.IsNameStableForNetworking())
+        if (Outer?.TryLoad(out var outer) == true && !outer.IsNameStableForNetworking())
         {
             return false;	// If any outer isn't stable, we can't consider the full name stable
         }
@@ -465,47 +504,82 @@ public class UObject : IPropertyHolder
 
 public static class PropertyUtil
 {
-    // TODO Little Problem here: Can't use T? since this would need a constraint to struct or class, which again wouldn't work fine with primitives
-    public static T GetOrDefault<T>(IPropertyHolder holder, string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal)
+    public static bool SearchPropertyInTemplate = false;
+
+    private static bool TryGet(this IPropertyHolder holder, string name, out FPropertyTag? tag, StringComparison comparisonType = StringComparison.Ordinal)
     {
-        foreach (var prop in holder.Properties)
+        foreach (var prop in holder.Properties.Where(prop => prop.Name.Text.Equals(name, comparisonType)))
         {
-            if (prop.Name.Text.Equals(name, comparisonType))
+            tag = prop;
+            return true;
+        }
+
+        if (SearchPropertyInTemplate && holder is UObject obj)
+        {
+            // if not here then in look in template
+            var temp = obj.Template?.Object?.Value;
+            if (temp != null && temp.TryGet(name, out tag, comparisonType))
             {
-                var value = prop.Tag?.GetValue(typeof(T));
-                if (value is T cast)
-                    return cast;
+                return true;
+            }
+
+            // if not here then in look in class ..? // not sure about this one
+            temp = obj.Class?.Object?.Value;
+            if (temp != null && temp.TryGet(name, out tag, comparisonType))
+            {
+                return true;
             }
         }
 
+        tag = null;
+        return false;
+    }
+
+    public static bool TryGet<T>(this IPropertyHolder holder, string name, out T value, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal)
+    {
+        if (holder.TryGet(name, out var prop, comparisonType) && prop?.Tag?.GetValue(typeof(T)) is T val)
+        {
+            value = val;
+            return true;
+        }
+
+        value = defaultValue;
+        return false;
+    }
+
+    // TODO Little Problem here: Can't use T? since this would need a constraint to struct or class, which again wouldn't work fine with primitives
+    public static T GetOrDefault<T>(IPropertyHolder holder, string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal)
+    {
+        if (holder.TryGet(name, out var value, defaultValue, comparisonType))
+        {
+            return value;
+        }
         return defaultValue;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Lazy<T> GetOrDefaultLazy<T>(IPropertyHolder holder, string name, T defaultValue = default!,
-        StringComparison comparisonType = StringComparison.Ordinal) =>
-        new(() => GetOrDefault(holder, name, defaultValue, comparisonType));
+    public static Lazy<T> GetOrDefaultLazy<T>(IPropertyHolder holder, string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal)
+        => new(() => GetOrDefault(holder, name, defaultValue, comparisonType));
 
     // Not optimal as well. Can't really compare against null or default. That's why this is a copy of GetOrDefault that throws instead
     public static T Get<T>(IPropertyHolder holder, string name, StringComparison comparisonType = StringComparison.Ordinal)
     {
-        var tag = holder.Properties.FirstOrDefault(it => it.Name.Text.Equals(name, comparisonType))?.Tag;
-        if (tag == null)
+        if (!holder.TryGet(name, out var tag) || tag?.Tag == null)
         {
             throw new NullReferenceException($"{holder.GetType().Name} does not have a property '{name}'");
         }
-        var value = tag.GetValue(typeof(T));
-        if (value is T cast)
+
+        if (tag.Tag.GetValue(typeof(T)) is T cast)
         {
             return cast;
         }
+
         throw new NullReferenceException($"Couldn't get property '{name}' of type {typeof(T).Name} in {holder.GetType().Name}");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static Lazy<T> GetLazy<T>(IPropertyHolder holder, string name,
-        StringComparison comparisonType = StringComparison.Ordinal) =>
-        new(() => Get<T>(holder, name, comparisonType));
+    public static Lazy<T> GetLazy<T>(IPropertyHolder holder, string name, StringComparison comparisonType = StringComparison.Ordinal)
+        => new(() => Get<T>(holder, name, comparisonType));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static T GetByIndex<T>(IPropertyHolder holder, int index)
@@ -515,12 +589,53 @@ public static class PropertyUtil
         {
             throw new NullReferenceException($"{holder.GetType().Name} does not have a property at index '{index}'");
         }
-        var value = tag.GetValue(typeof(T));
-        if (value is T cast)
+
+        if (tag.GetValue(typeof(T)) is T cast)
         {
             return cast;
         }
+
         throw new NullReferenceException($"Couldn't get property of type {typeof(T).Name} at index '{index}' in {holder.GetType().Name}");
+    }
+
+    public static void Set<T>(IPropertyHolder holder, string name, T value, StringComparison comparisonType = StringComparison.Ordinal)
+    {
+        FPropertyTag? tag = null;
+        int foundIndex = -1;
+        for (var i = 0; i < holder.Properties.Count; i++) {
+            var prop = holder.Properties[i];
+            if (prop.Name.Text.Equals(name, comparisonType)) {
+                if (prop.Tag != null) {
+                    if (prop.Tag is ObjectProperty tagData && value is FPackageIndex idx) {
+                        tagData.Value = idx;
+                        return;
+                    }
+                }
+
+                tag = prop;
+                foundIndex = i;
+                break;
+            }
+        }
+
+        var tag2 = tag ?? new FPropertyTag(name, typeof(T).Name, 0, 0, null, false, null, null);
+
+        tag2.Tag = value switch
+        {
+            FPackageIndex idx => new ObjectProperty(idx),
+            IUStruct uStruct => new StructProperty(new FScriptStruct(uStruct)),
+            FPropertyTagType propType => propType,
+            _ => throw new NotImplementedException($"Setting properties of type {typeof(T).Name} is not implemented yet")
+        };
+
+        if (foundIndex != -1)
+        {
+            holder.Properties[foundIndex] = tag2;
+        }
+        else
+        {
+            holder.Properties.Add(tag2);
+        }
     }
 }
 

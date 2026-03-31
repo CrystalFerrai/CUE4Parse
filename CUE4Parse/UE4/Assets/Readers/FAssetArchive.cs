@@ -1,40 +1,55 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 using CUE4Parse.UE4.Assets.Exports;
+using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Assets.Utils;
 using CUE4Parse.UE4.Exceptions;
 using CUE4Parse.UE4.Objects.UObject;
 using CUE4Parse.UE4.Readers;
+using CUE4Parse.UE4.Versions;
 using Serilog;
 
 namespace CUE4Parse.UE4.Assets.Readers
 {
     public class FAssetArchive : FArchive
     {
-        private readonly Dictionary<PayloadType, Lazy<FAssetArchive?>> _payloads;
-        private readonly FArchive _baseArchive;
+        private readonly Dictionary<PayloadType, Func<FByteBulkDataHeader?, FAssetArchive?>> _payloads;
+        private FArchive _baseArchive;
 
         public readonly IPackage? Owner;
         public int AbsoluteOffset;
 
         public bool HasUnversionedProperties => Owner?.HasFlags(EPackageFlags.PKG_UnversionedProperties) ?? false;
         public bool IsFilterEditorOnly => Owner?.HasFlags(EPackageFlags.PKG_FilterEditorOnly) ?? false;
+        public bool IsLoadingFromCookedPackage => Owner?.HasFlags(EPackageFlags.PKG_Cooked) ?? false;
 
-        public FAssetArchive(FArchive baseArchive, IPackage? owner, int absoluteOffset = 0, Dictionary<PayloadType, Lazy<FAssetArchive?>>? payloads = null) : base(baseArchive.Versions)
+        public FAssetArchive(FArchive baseArchive, IPackage? owner, int absoluteOffset = 0, Dictionary<PayloadType, Func<FByteBulkDataHeader?, FAssetArchive?>>? payloads = null) : base(baseArchive.Versions)
         {
-            _payloads = payloads ?? new Dictionary<PayloadType, Lazy<FAssetArchive?>>();
+            _payloads = payloads ?? new Dictionary<PayloadType, Func<FByteBulkDataHeader?, FAssetArchive?>>();
             _baseArchive = baseArchive;
             Owner = owner;
             AbsoluteOffset = absoluteOffset;
+        }
+
+        public void SetBaseArchive(FArchive newArchive)
+        {
+            _baseArchive = newArchive;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public override FName ReadFName()
         {
             var nameIndex = Read<int>();
-            var extraIndex = Read<int>();
+            var extraIndex = 0;
+            if (Ver >= EUnrealEngineObjectUE3Version.FNAME_CHANGE_NAME_SPLIT)
+            {
+                extraIndex = Read<int>();
+            }
 #if !NO_FNAME_VALIDATION
             if (nameIndex < 0 || nameIndex >= Owner!.NameMap.Length)
             {
@@ -45,7 +60,7 @@ namespace CUE4Parse.UE4.Assets.Readers
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public bool TestReadFName()
+        public virtual bool TestReadFName()
         {
             if (HasUnversionedProperties) return false;
             var savedPos = Position;
@@ -98,20 +113,24 @@ namespace CUE4Parse.UE4.Assets.Readers
 
         public override UObject? ReadUObject() => ReadObject<UObject>().Value;
 
-        public bool TryGetPayload(PayloadType type, out FAssetArchive? ar)
+        public bool TryGetPayload(PayloadType type, [MaybeNullWhen(false)] out FAssetArchive ar, FByteBulkDataHeader? header = null)
         {
-            ar = null;
-            if (!_payloads.TryGetValue(type, out var ret)) return false;
-
-            ar = ret.Value;
-            return true;
+            try
+            {
+                ar = GetPayload(type, header);
+            }
+            catch
+            {
+                ar = null;
+            }
+            return ar != null;
         }
 
-        public FAssetArchive GetPayload(PayloadType type)
+        public FAssetArchive GetPayload(PayloadType type, FByteBulkDataHeader? header = null)
         {
             _payloads.TryGetValue(type, out var ret);
-            var reader = ret?.Value;
-            return reader ?? throw new ParserException(this, $"{type} is needed to parse the current package");
+            var reader = ret?.Invoke(header);
+            return reader ?? throw new ParserException(this, $"Requested payload of type {type} was not found");
         }
 
         public void AddPayload(PayloadType type, FAssetArchive payload)
@@ -121,26 +140,33 @@ namespace CUE4Parse.UE4.Assets.Readers
                 throw new ParserException(this, $"Can't add a payload that is already attached of type {type}");
             }
 
-            _payloads[type] = new Lazy<FAssetArchive?>(() => payload);
+            _payloads[type] = _ => payload;
         }
 
-        public void AddPayload(PayloadType type, int absoluteOffset, Lazy<FArchive?> payload)
+        public void AddPayload(PayloadType type, int absoluteOffset, Func<FByteBulkDataHeader?, FArchive?> payload)
         {
             if (_payloads.ContainsKey(type))
             {
                 throw new ParserException(this, $"Can't add a payload that is already attached of type {type}");
             }
 
-            _payloads[type] = new Lazy<FAssetArchive?>(() =>
+            _payloads[type] = header =>
             {
-                var rawAr = payload.Value;
+                var rawAr = payload.Invoke(header);
                 return rawAr == null ? null : new FAssetArchive(rawAr, Owner, absoluteOffset);
-            });
+            };
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public override int Read(byte[] buffer, int offset, int count)
             => _baseArchive.Read(buffer, offset, count);
+
+        public override int ReadAt(long position, byte[] buffer, int offset, int count)
+            => _baseArchive.ReadAt(position, buffer, offset, count);
+        public override Task<int> ReadAtAsync(long position, byte[] buffer, int offset, int count, CancellationToken cancellationToken = default)
+            => _baseArchive.ReadAtAsync(position, buffer, offset, count, cancellationToken);
+        public override ValueTask<int> ReadAtAsync(long position, Memory<byte> memory, CancellationToken cancellationToken = default)
+            => _baseArchive.ReadAtAsync(position, memory, cancellationToken);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public override long Seek(long offset, SeekOrigin origin)

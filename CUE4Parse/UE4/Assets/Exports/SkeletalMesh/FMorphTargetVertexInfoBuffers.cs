@@ -55,7 +55,8 @@ public class FMorphTargetVertexInfo
             for (var i = 0; i < NumElements; i++)
             {
                 uint vert = (uint) (IndexMin + i + packed.Read(IndexBits));
-                QuantizedDelta[i] = new FQuantizedDelta(packed.ReadIntVector(PositionBits), packed.ReadIntVector(TangentZBits), vert);
+                QuantizedDelta[i] = new FQuantizedDelta(packed.ReadIntVector(PositionBits),
+                    bTangents ? packed.ReadIntVector(TangentZBits) : FIntVector.Zero, vert);
             }
         }
 
@@ -77,7 +78,7 @@ public class FMorphTargetVertexInfoBuffers
 
     public FMorphTargetVertexInfoBuffers(FArchive Ar)
     {
-        var packed = new FByteArchive("PackedMorphData", Ar.ReadArray<byte>(Ar.Read<int>() * sizeof(uint)), Ar.Versions);
+        using var packed = new FByteArchive("PackedMorphData", Ar.ReadArray<byte>(Ar.Read<int>() * sizeof(uint)), Ar.Versions);
         MinimumValuePerMorph = Ar.ReadArray<FVector4>();
         MaximumValuePerMorph = Ar.ReadArray<FVector4>();
         BatchStartOffsetPerMorph = Ar.ReadArray<uint>();

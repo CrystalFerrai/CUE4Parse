@@ -6,6 +6,7 @@ using CUE4Parse.UE4.Readers;
 using CUE4Parse.UE4.Versions;
 using CUE4Parse.UE4.Writers;
 using CUE4Parse.Utils;
+using FixedMathSharp;
 
 namespace CUE4Parse.UE4.Objects.Core.Math
 {
@@ -52,18 +53,9 @@ namespace CUE4Parse.UE4.Objects.Core.Math
 
         public FVector(FArchive Ar)
         {
-            if (Ar.Ver >= EUnrealEngineObjectUE5Version.LARGE_WORLD_COORDINATES)
-            {
-                X = (float) Ar.Read<double>();
-                Y = (float) Ar.Read<double>();
-                Z = (float) Ar.Read<double>();
-            }
-            else
-            {
-                X = Ar.Read<float>();
-                Y = Ar.Read<float>();
-                Z = Ar.Read<float>();
-            }
+            X = Ar.ReadFReal();
+            Y = Ar.ReadFReal();
+            Z = Ar.ReadFReal();
         }
 
         /// <summary>
@@ -174,16 +166,25 @@ namespace CUE4Parse.UE4.Objects.Core.Math
         public static FVector operator +(FVector a, FVector b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static FVector operator +(FVector a, FIntVector b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator +(FVector a, float bias) => new(a.X + bias, a.Y + bias, a.Z + bias);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator -(FVector a, FVector b) => new(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static FVector operator -(FVector a, FIntVector b) => new(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator -(FVector a, float bias) => new(a.X - bias, a.Y - bias, a.Z - bias);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator *(FVector a, FVector b) => new(a.X * b.X, a.Y * b.Y, a.Z * b.Z);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static FVector operator *(FVector a, FIntVector b) => new(a.X * b.X, a.Y * b.Y, a.Z * b.Z);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator *(FVector a, float scale) => new(a.X * scale, a.Y * scale, a.Z * scale);
@@ -203,6 +204,9 @@ namespace CUE4Parse.UE4.Objects.Core.Math
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator /(FVector a, FVector b) => new(a.X / b.X, a.Y / b.Y, a.Z / b.Z);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static FVector operator /(FVector a, FIntVector b) => new(a.X / b.X, a.Y / b.Y, a.Z / b.Z);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static FVector operator /(FVector a, float scale)
@@ -568,5 +572,6 @@ namespace CUE4Parse.UE4.Objects.Core.Math
         }
 
         public static implicit operator Vector3(FVector v) => new(v.X, v.Y, v.Z);
+        public static implicit operator FVector(Vector3d v) => new((float)v.x, (float)v.y, (float)v.z);
     }
 }

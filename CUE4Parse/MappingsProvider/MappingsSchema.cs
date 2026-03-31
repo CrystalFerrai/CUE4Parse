@@ -47,6 +47,20 @@ namespace CUE4Parse.MappingsProvider
 
             return true;
         }
+
+        public int CountProperties(bool includeSuper)
+        {
+            int total = 0;
+            var current = this;
+
+            while (current != null)
+            {
+                total += current.PropertyCount;
+                current = includeSuper ? current.Super.Value : null;
+            }
+
+            return total;
+        }
     }
 
     public class SerializedStruct : Struct
@@ -79,7 +93,7 @@ namespace CUE4Parse.MappingsProvider
             for (var i = 0; i < struc.ChildProperties.Length; i++)
             {
                 var prop = (FProperty) struc.ChildProperties[i];
-                var propInfo = new PropertyInfo(i, prop.Name.Text, new PropertyType(prop), prop.ArrayDim);
+                var propInfo = new PropertyInfo(Math.Min(i, prop.ArrayDim - 1), prop.Name.Text, new PropertyType(prop), prop.ArrayDim);
                 for (var j = 0; j < prop.ArrayDim; j++)
                 {
                     Properties[i + j] = propInfo;
@@ -103,7 +117,7 @@ namespace CUE4Parse.MappingsProvider
             MappingType = mappingType;
         }
 
-        public override string ToString() => $"{Index}/{ArraySize - 1} -> {Name}";
+        public override string ToString() => $"{Index + 1}/{ArraySize} -> {Name}";
         public object Clone() => this.MemberwiseClone();
     }
 

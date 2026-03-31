@@ -27,7 +27,8 @@ public struct FUniversalObjectLocatorFragment: IUStruct
     private static Dictionary<string, string> FragmentTypeRegistry = new()
     {
         { "actor", "DirectPathObjectLocator" },
-        { "animinst", "DirectPathObjectLocator" },
+        { "animinst", "AnimInstanceLocatorFragment" },
         { "subobj", "SubObjectLocator" },
+        { "ls_lazy_obj_ptr", "LegacyLazyObjectPtrFragment" },
     };
 }

@@ -6,6 +6,7 @@ using Newtonsoft.Json;
 namespace CUE4Parse.UE4.Objects.UObject;
 
 [Flags]
+[JsonConverter(typeof(EnumConverter<EPropertyFlags>))]
 public enum EPropertyFlags : ulong
 {
     None = 0,
@@ -345,6 +346,18 @@ public class FProperty : FField
         BlueprintReplicationCondition = (ELifetimeCondition) Ar.Read<byte>();
     }
 
+    internal EAccessMode GetAccessMode()
+    {
+        if (PropertyFlags.HasFlag(EPropertyFlags.BlueprintVisible) ||
+            PropertyFlags.HasFlag(EPropertyFlags.BlueprintReadOnly))
+            return EAccessMode.Public;
+
+        if (PropertyFlags.HasFlag(EPropertyFlags.Edit))
+            return EAccessMode.Protected;
+
+        return EAccessMode.Private;
+    }
+
     protected internal override void WriteJson(JsonWriter writer, JsonSerializer serializer)
     {
         base.WriteJson(writer, serializer);
@@ -658,24 +671,7 @@ public class FObjectProperty : FProperty
     }
 }
 
-public class FSoftClassProperty : FObjectProperty
-{
-    public FPackageIndex MetaClass;
-
-    public override void Deserialize(FAssetArchive Ar)
-    {
-        base.Deserialize(Ar);
-        MetaClass = new FPackageIndex(Ar);
-    }
-
-    protected internal override void WriteJson(JsonWriter writer, JsonSerializer serializer)
-    {
-        base.WriteJson(writer, serializer);
-
-        writer.WritePropertyName("MetaClass");
-        serializer.Serialize(writer, MetaClass);
-    }
-}
+public class FSoftClassProperty : FClassProperty;
 
 public class FSoftObjectProperty : FObjectProperty;
 
@@ -699,6 +695,7 @@ public class FSetProperty : FProperty
 }
 
 public class FStrProperty : FProperty;
+public class FUtf8StrProperty : FProperty;
 
 public class FStructProperty : FProperty
 {
@@ -726,6 +723,8 @@ public class FUInt16Property : FNumericProperty;
 public class FUInt32Property : FNumericProperty;
 
 public class FUInt64Property : FNumericProperty;
+
+public class FWeakObjectProperty : FObjectProperty;
 
 public class FOptionalProperty : FProperty
 {
@@ -784,4 +783,31 @@ public class FVerseFunctionProperty : FProperty
     }
 }
 
+public class FVerseClassProperty : FClassProperty
+{
+    public bool bRequiresConcrete;
+    public bool bRequiresCastable;
+    
+    public override void Deserialize(FAssetArchive Ar)
+    {
+        base.Deserialize(Ar);
+
+        bRequiresConcrete = Ar.ReadBoolean();
+        bRequiresCastable = Ar.ReadBoolean();
+    }
+
+    protected internal override void WriteJson(JsonWriter writer, JsonSerializer serializer)
+    {
+        base.WriteJson(writer, serializer);
+        
+        writer.WritePropertyName(nameof(bRequiresConcrete));
+        serializer.Serialize(writer, bRequiresConcrete);
+        
+        writer.WritePropertyName(nameof(bRequiresCastable));
+        serializer.Serialize(writer, bRequiresCastable);
+    }
+}
+
 public class FVerseDynamicProperty : FProperty;
+
+public class FReferenceProperty : FProperty;

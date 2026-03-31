@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.CompilerServices;
+using CUE4Parse.UE4.Assets.Objects;
 using CUE4Parse.UE4.Assets.Readers;
 using CUE4Parse.UE4.Versions;
 
@@ -11,10 +12,34 @@ public struct FOptTexturePlatformData
     public uint NumMipsInTail;
 }
 
+public struct FSharedImage
+{
+    public readonly int SizeX;
+    public readonly int SizeY;
+    public readonly int SizeZ;
+    public readonly EPixelFormat Format;
+    public readonly byte GammaSpace;
+    public readonly FTexture2DMipMap Mip;
+
+    public FSharedImage(FAssetArchive Ar)
+    {
+        SizeX = Ar.Read<int>();
+        SizeY = Ar.Read<int>();
+        SizeZ = Ar.Read<int>();
+        Format = Ar.Read<EPixelFormat>();
+        GammaSpace = Ar.Read<byte>();
+        var RawData = Ar.ReadArray<byte>((int)Ar.Read<long>());
+
+        var bulkdata = new FByteBulkData(RawData);
+        Mip = new FTexture2DMipMap(bulkdata, SizeX, SizeY, this.SizeZ);
+    }
+}
+
 public class FTexturePlatformData
 {
     private const uint BitMask_CubeMap = 1u << 31;
     private const uint BitMask_HasOptData = 1u << 30;
+    private const uint BitMask_HasCpuCopy = 1u << 29;
     private const uint BitMask_NumSlices = BitMask_HasOptData - 1u;
 
     public readonly int SizeX;
@@ -23,8 +48,9 @@ public class FTexturePlatformData
     public readonly string PixelFormat;
     public readonly FOptTexturePlatformData OptData;
     public readonly int FirstMipToSerialize;
-    public readonly FTexture2DMipMap[] Mips;
+    public FTexture2DMipMap[] Mips;
     public readonly FVirtualTextureBuiltData? VTData;
+    public readonly FSharedImage? CPUCopy;
 
     public FTexturePlatformData()
     {
@@ -34,17 +60,26 @@ public class FTexturePlatformData
         PixelFormat = string.Empty;
         OptData = default;
         FirstMipToSerialize = -1;
-        Mips = Array.Empty<FTexture2DMipMap>();
+        Mips = [];
         VTData = null;
     }
 
-    public FTexturePlatformData(FAssetArchive Ar, UTexture Owner)
+    public FTexturePlatformData(FAssetArchive Ar, UTexture Owner, bool bSerializeMipData = true)
     {
-        if (Ar is { Game: >= EGame.GAME_UE5_0, IsFilterEditorOnly: true })
+        const long PlaceholderDerivedDataSize = 16;
+        if (Ar.Game is >= EGame.GAME_UE5_2)
         {
-            const long PlaceholderDerivedDataSize = 16;
+            if (Ar.ReadFlag() && Ar.Game != EGame.GAME_InfinityNikki) // bUsingDerivedData
+                throw new NotImplementedException("FTexturePlatformData deserialization using derived data is not implemented.");
+            else
+                Ar.Position += PlaceholderDerivedDataSize - 1;
+        }
+        else if (Ar is { Game: >= EGame.GAME_UE5_0, IsFilterEditorOnly: true })
+        {
             Ar.Position += PlaceholderDerivedDataSize;
         }
+
+        if (Ar.Game == EGame.GAME_InfinityNikki) Ar.Position += 4;
 
         if (Ar.Game == EGame.GAME_PlayerUnknownsBattlegrounds)
         {
@@ -62,6 +97,7 @@ public class FTexturePlatformData
 
         PixelFormat = Ar.Game == EGame.GAME_GearsOfWar4 ? Ar.ReadFName().Text : Ar.ReadFString();
 
+        if (Ar.Game == EGame.GAME_DragonQuestXI) Ar.Position += 4;
         if (Ar.Game == EGame.GAME_FinalFantasy7Remake && (PackedData & 0xffff) == 16384)
         {
             var unk0 = Ar.Read<int>();
@@ -72,7 +108,13 @@ public class FTexturePlatformData
         if (HasOptData())
         {
             if (Ar.Game == EGame.GAME_MidnightSuns) Ar.Position += 4;
+            if (Ar.Game == EGame.GAME_Psychonauts2) Ar.Position += 24;
             OptData = Ar.Read<FOptTexturePlatformData>();
+        }
+
+        if (HasCpuCopy()) // 5.4+
+        {
+            CPUCopy = new FSharedImage(Ar);
         }
 
         FirstMipToSerialize = Ar.Read<int>(); // only for cooked, but we don't read FTexturePlatformData for non-cooked textures
@@ -91,13 +133,20 @@ public class FTexturePlatformData
             Ar.Position += 4;
         }
 
+        if (Ar.Game == EGame.GAME_DaysGone) Ar.Position += 8;
+
         Mips = new FTexture2DMipMap[mipCount];
         for (var i = 0; i < Mips.Length; i++)
         {
-            Mips[i] = new FTexture2DMipMap(Ar);
+            Mips[i] = new FTexture2DMipMap(Ar, bSerializeMipData);
 
             if (Owner is UVolumeTexture or UTextureCube)
-                Mips[i].SizeY *= GetNumSlices();
+            {
+                var slices = GetNumSlices();
+                if (Ar.Game == EGame.GAME_Borderlands4) slices = slices != 1 ? slices >> 1 : 1;
+                Mips[i].SizeY *= slices;
+                Mips[i].SizeZ = Mips[i].SizeZ == slices ? 1 : Mips[i].SizeZ;
+            }
         }
 
         if (Ar.Versions["VirtualTextures"])
@@ -109,6 +158,8 @@ public class FTexturePlatformData
                 VTData = new FVirtualTextureBuiltData(Ar, FirstMipToSerialize - LODBias);
             }
         }
+
+        if (Ar.Game is EGame.GAME_AssaultFireFuture && Ar.ReadBoolean()) Ar.Position += 112; 
 
         if (Mips.Length > 0)
         {
@@ -124,6 +175,9 @@ public class FTexturePlatformData
             SizeY = (int) VTData.Height;
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool HasCpuCopy() => (PackedData & BitMask_HasCpuCopy) == BitMask_HasCpuCopy;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool HasOptData() => (PackedData & BitMask_HasOptData) == BitMask_HasOptData;

@@ -169,7 +169,7 @@ namespace CUE4Parse_Conversion.Meshes.glTF
                 var materialExporter = new MaterialExporter2(tex, options);
                 materialExports?.Add(materialExporter);
             }
-            else materialName = $"material_{index}";
+            else materialName = sect.MaterialName ?? $"material_{index}";
 
             var mat = new MaterialBuilder().WithBaseColor(Vector4.One);
             mat.Name = materialName;
@@ -177,7 +177,7 @@ namespace CUE4Parse_Conversion.Meshes.glTF
             var prim = mesh.UsePrimitive(mat);
             for (int j = 0; j < sect.NumFaces; j++)
             {
-                var wedgeIndex = new int[3];
+                var wedgeIndex = new uint[3];
                 for (var k = 0; k < wedgeIndex.Length; k++)
                 {
                     wedgeIndex[k] = lod.Indices.Value[sect.FirstIndex + j * 3 + k];
@@ -204,7 +204,7 @@ namespace CUE4Parse_Conversion.Meshes.glTF
                 var materialExporter = new MaterialExporter2(tex, options);
                 materialExports?.Add(materialExporter);
             }
-            else materialName = $"material_{index}";
+            else materialName = sect.MaterialName ?? $"material_{index}";
 
             var mat = new MaterialBuilder().WithBaseColor(Vector4.One);
             mat.Name = materialName;
@@ -212,7 +212,7 @@ namespace CUE4Parse_Conversion.Meshes.glTF
             var prim = mesh.UsePrimitive(mat);
             for (int j = 0; j < sect.NumFaces; j++)
             {
-                var wedgeIndex = new int[3];
+                var wedgeIndex = new uint[3];
                 for (var k = 0; k < wedgeIndex.Length; k++)
                 {
                     wedgeIndex[k] = lod.Indices.Value[sect.FirstIndex + j * 3 + k];
@@ -251,14 +251,14 @@ namespace CUE4Parse_Conversion.Meshes.glTF
         }
 
         public static (VertexColorXTextureX, VertexColorXTextureX, VertexColorXTextureX) PrepareUVsAndTexCoords(
-            CBaseMeshLod lod, CMeshVertex vert1, CMeshVertex vert2, CMeshVertex vert3, int[] indices)
+            CBaseMeshLod lod, CMeshVertex vert1, CMeshVertex vert2, CMeshVertex vert3, uint[] indices)
         {
             return PrepareUVsAndTexCoords(lod.VertexColors ?? new FColor[lod.NumVerts], vert1, vert2, vert3,
                 lod.ExtraUV.Value, indices);
         }
 
         public static (VertexColorXTextureX, VertexColorXTextureX, VertexColorXTextureX) PrepareUVsAndTexCoords(
-            FColor[] colors, CMeshVertex vert1, CMeshVertex vert2, CMeshVertex vert3, FMeshUVFloat[][] uvs, int[] indices)
+            FColor[] colors, CMeshVertex vert1, CMeshVertex vert2, CMeshVertex vert3, FMeshUVFloat[][] uvs, uint[] indices)
         {
             var (uvs1, uvs2, uvs3) = PrepareUVs(vert1, vert2, vert3, uvs, indices);
             var c1 = new VertexColorXTextureX((Vector4)colors[indices[0]]/255, uvs1);
@@ -267,16 +267,16 @@ namespace CUE4Parse_Conversion.Meshes.glTF
             return (c1, c2, c3);
         }
 
-        private static (List<Vector2>, List<Vector2>, List<Vector2>) PrepareUVs(CMeshVertex vert1, CMeshVertex vert2, CMeshVertex vert3, FMeshUVFloat[][] uvs, int[] indices)
+        private static (List<Vector2>, List<Vector2>, List<Vector2>) PrepareUVs(CMeshVertex vert1, CMeshVertex vert2, CMeshVertex vert3, FMeshUVFloat[][] uvs, uint[] indices)
         {
-            var uvs1 = new List<Vector2>() { vert1.UV };
-            var uvs2 = new List<Vector2>() { vert2.UV };
-            var uvs3 = new List<Vector2>() { vert3.UV };
+            var uvs1 = new List<Vector2>() { (Vector2)vert1.UV };
+            var uvs2 = new List<Vector2>() { (Vector2)vert2.UV };
+            var uvs3 = new List<Vector2>() { (Vector2)vert3.UV };
             foreach (var uv in uvs)
             {
-                uvs1.Add(uv[indices[0]]);
-                uvs2.Add(uv[indices[1]]);
-                uvs3.Add(uv[indices[2]]);
+                uvs1.Add((Vector2)uv[indices[0]]);
+                uvs2.Add((Vector2)uv[indices[1]]);
+                uvs3.Add((Vector2)uv[indices[2]]);
             }
 
             return (uvs1, uvs2, uvs3);

@@ -1,91 +1,62 @@
 using System;
 using System.Collections.Generic;
 using CUE4Parse.UE4.Assets.Exports;
+using CUE4Parse.UE4.Assets.Objects.Properties;
+using CUE4Parse.UE4.Assets.Objects.Unversioned;
 using CUE4Parse.UE4.Assets.Readers;
 using CUE4Parse.UE4.Objects.UObject;
 using Newtonsoft.Json;
+using Serilog;
 
-namespace CUE4Parse.UE4.Assets.Objects
+namespace CUE4Parse.UE4.Assets.Objects;
+
+[JsonConverter(typeof(FStructFallbackConverter))]
+[SkipObjectRegistration]
+public class FStructFallback : AbstractPropertyHolder, IUStruct
 {
-    [JsonConverter(typeof(FStructFallbackConverter))]
-    [SkipObjectRegistration]
-    public class FStructFallback : IUStruct, IPropertyHolder
+    public FStructFallback() => Properties = [];
+
+    public FStructFallback(List<FPropertyTag> properties) => Properties = properties;
+
+    public FStructFallback(FAssetArchive Ar, string? structType) : this(Ar, structType != null ? new UScriptClass(structType) : null) { }
+
+    public FStructFallback(FAssetArchive Ar, UStruct? structType = null)
     {
-        public List<FPropertyTag> Properties { get; }
-
-        public FStructFallback()
+        if (Ar.HasUnversionedProperties)
         {
-            Properties = new List<FPropertyTag>();
+            if (structType == null) throw new ArgumentException("For unversioned struct fallback the struct type cannot be null", nameof(structType));
+            UObject.DeserializePropertiesUnversioned(Properties = [], Ar, structType);
         }
-
-        public FStructFallback(FAssetArchive Ar, string? structType) : this(Ar, structType != null ? new UScriptClass(structType) : null) { }
-
-        public FStructFallback(FAssetArchive Ar, UStruct? structType = null)
+        else
         {
-            if (Ar.HasUnversionedProperties)
-            {
-                if (structType == null) throw new ArgumentException("For unversioned struct fallback the struct type cannot be null", nameof(structType));
-                UObject.DeserializePropertiesUnversioned(Properties = new List<FPropertyTag>(), Ar, structType);
-            }
-            else
-            {
-                UObject.DeserializePropertiesTagged(Properties = new List<FPropertyTag>(), Ar, true);
-            }
+            UObject.DeserializePropertiesTagged(Properties = [], Ar, true);
         }
+    }
 
-        public T GetOrDefault<T>(string name, T defaultValue = default!, StringComparison comparisonType = StringComparison.Ordinal) =>
-            PropertyUtil.GetOrDefault<T>(this, name, defaultValue, comparisonType);
+    public FStructFallback(FAssetArchive Ar, string? structType, FRawHeader rawHeader, ReadType type = ReadType.NORMAL)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(structType, nameof(structType));
+        UObject.DeserializeRawProperties(Properties = [], Ar, new UScriptClass(structType), rawHeader, type);
+    }
 
-        public Lazy<T> GetOrDefaultLazy<T>(string name, T defaultValue = default,
-            StringComparison comparisonType = StringComparison.Ordinal)
+    public static FStructFallback? ReadInstancedStruct(FAssetArchive Ar)
+    {
+        var structType = new FPackageIndex(Ar);
+        if (structType.IsNull) return null;
+
+        FStructFallback? result = null;
+        if (structType.TryLoad<UStruct>(out var struc))
         {
-            throw new NotImplementedException();
+            result = new FStructFallback(Ar, struc);
         }
-
-        public T Get<T>(string name, StringComparison comparisonType = StringComparison.Ordinal) =>
-            PropertyUtil.Get<T>(this, name, comparisonType);
-
-        public Lazy<T> GetLazy<T>(string name, StringComparison comparisonType = StringComparison.Ordinal)
+        else if (structType.ResolvedObject is { } obj)
         {
-            throw new NotImplementedException();
+            result = new FStructFallback(Ar, obj.Name.ToString());
         }
-
-        public T GetByIndex<T>(int index)
+        else
         {
-            throw new NotImplementedException();
+            Log.Warning("Failed to read Struct of type {0}, skipping it", structType.ResolvedObject?.GetFullName());
         }
-
-        public bool TryGetValue<T>(out T obj, params string[] names)
-        {
-            foreach (string name in names)
-            {
-                if (GetOrDefault<T>(name, comparisonType: StringComparison.OrdinalIgnoreCase) is { } ret/* && !ret.Equals(default(T))*/)
-                {
-                    obj = ret;
-                    return true;
-                }
-            }
-
-            obj = default!;
-            return false;
-        }
-        public bool TryGetAllValues<T>(out T[] obj, string name)
-        {
-            var maxIndex = -1;
-            var collected = new List<FPropertyTag>();
-            foreach (var prop in Properties)
-            {
-                if (prop.Name.Text != name) continue;
-                collected.Add(prop);
-                maxIndex = Math.Max(maxIndex, prop.ArrayIndex);
-            }
-
-            obj = new T[maxIndex + 1];
-            foreach (var prop in collected) {
-                obj[prop.ArrayIndex] = (T)prop.Tag?.GetValue(typeof(T))!;
-            }
-
-            return obj.Length > 0;
-        }
+        return result;
     }
 }

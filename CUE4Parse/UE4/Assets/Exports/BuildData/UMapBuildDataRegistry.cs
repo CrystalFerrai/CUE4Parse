@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using CUE4Parse.UE4.Assets.Readers;
@@ -26,57 +27,44 @@ public class UMapBuildDataRegistry : UObject
         base.Deserialize(Ar, validPos);
 
         var stripFlags = new FStripDataFlags(Ar);
+        if (Ar.Game is EGame.GAME_Farlight84 or EGame.GAME_OutlastTrials or EGame.GAME_DuetNightAbyss or EGame.GAME_CrystalOfAtlan) return;
 
-        if (!stripFlags.IsDataStrippedForServer())
+        if (!stripFlags.IsAudioVisualDataStripped())
         {
-            var numEntries = Ar.Read<int>();
-            MeshBuildData = new Dictionary<FGuid, FMeshMapBuildData>(numEntries);
-            for (var i = 0; i < numEntries; ++i)
-            {
-                MeshBuildData[Ar.Read<FGuid>()] = new FMeshMapBuildData(Ar);
-            }
-
-            numEntries = Ar.Read<int>();
-            LevelPrecomputedLightVolumeBuildData = new Dictionary<FGuid, FPrecomputedLightVolumeData>(numEntries);
-            for (var i = 0; i < numEntries; ++i)
-            {
-                LevelPrecomputedLightVolumeBuildData[Ar.Read<FGuid>()] = new FPrecomputedLightVolumeData(Ar);
-            }
+            MeshBuildData = Ar.ReadMap(Ar.Read<FGuid>, () => new FMeshMapBuildData(Ar));
+            LevelPrecomputedLightVolumeBuildData = Ar.ReadMap(Ar.Read<FGuid>, () => new FPrecomputedLightVolumeData(Ar));
 
             if (FRenderingObjectVersion.Get(Ar) >= FRenderingObjectVersion.Type.VolumetricLightmaps)
             {
-                numEntries = Ar.Read<int>();
-                LevelPrecomputedVolumetricLightmapBuildData = new Dictionary<FGuid, FPrecomputedVolumetricLightmapData>(numEntries);
-                for (var i = 0; i < numEntries; ++i)
-                {
-                    LevelPrecomputedVolumetricLightmapBuildData[Ar.Read<FGuid>()] = new FPrecomputedVolumetricLightmapData(Ar);
-                }
+                LevelPrecomputedVolumetricLightmapBuildData = Ar.ReadMap(Ar.Read<FGuid>, () => new FPrecomputedVolumetricLightmapData(Ar));
             }
 
-            numEntries = Ar.Read<int>();
-            LightBuildData = new Dictionary<FGuid, FLightComponentMapBuildData>(numEntries);
-            for (var i = 0; i < numEntries; ++i)
-            {
-                LightBuildData[Ar.Read<FGuid>()] = new FLightComponentMapBuildData(Ar);
-            }
-
+            LightBuildData = Ar.ReadMap(Ar.Read<FGuid>, () => new FLightComponentMapBuildData(Ar));
             if (FReflectionCaptureObjectVersion.Get(Ar) >= FReflectionCaptureObjectVersion.Type.MoveReflectionCaptureDataToMapBuildData)
             {
-                numEntries = Ar.Read<int>();
-                ReflectionCaptureBuildData = new Dictionary<FGuid, FReflectionCaptureMapBuildData>(numEntries);
-                for (var i = 0; i < numEntries; ++i)
-                {
-                    ReflectionCaptureBuildData[Ar.Read<FGuid>()] = new FReflectionCaptureMapBuildData(Ar);
-                }
+                if (Ar.Game is EGame.GAME_TheFirstDescendant) return;
+
+                ReflectionCaptureBuildData = Ar.ReadMap(Ar.Read<FGuid>, () => new FReflectionCaptureMapBuildData(Ar));
+            }
+
+            if (Ar.Game == EGame.GAME_ArenaBreakoutInfinite) return;
+            if (Ar.Game == EGame.GAME_HogwartsLegacy)
+            {
+                Ar.SkipFixedArray(1);
+                Ar.Position -= 4;
             }
 
             if (FRenderingObjectVersion.Get(Ar) >= FRenderingObjectVersion.Type.SkyAtmosphereStaticLightingVersioning)
             {
-                numEntries = Ar.Read<int>();
-                SkyAtmosphereBuildData = new Dictionary<FGuid, FSkyAtmosphereMapBuildData>(numEntries);
-                for (var i = 0; i < numEntries; ++i)
+                SkyAtmosphereBuildData = Ar.ReadMap(Ar.Read<FGuid>, () => new FSkyAtmosphereMapBuildData(Ar));
+            }
+
+            if (FFortniteMainBranchObjectVersion.Get(Ar) >= FFortniteMainBranchObjectVersion.Type.VolumetricLightMapGridDescSupport)
+            {
+                var bHasGrid = Ar.ReadBoolean();
+                if (bHasGrid)
                 {
-                    SkyAtmosphereBuildData[Ar.Read<FGuid>()] = new FSkyAtmosphereMapBuildData(Ar);
+                    //var gridDesc = new FVolumetricLightmapGridDesc(Ar);
                 }
             }
         }
@@ -134,7 +122,12 @@ public class FSkyAtmosphereMapBuildData
     }
 }
 
-public class FReflectionCaptureMapBuildData(FAssetArchive Ar) : FReflectionCaptureData(Ar) { }
+public class FReflectionCaptureMapBuildData : FReflectionCaptureData {
+
+    public FReflectionCaptureMapBuildData() { }
+
+    public FReflectionCaptureMapBuildData(FAssetArchive Ar) : base(Ar) { }
+}
 
 [JsonConverter(typeof(FReflectionCaptureDataConverter))]
 public class FReflectionCaptureData
@@ -142,8 +135,10 @@ public class FReflectionCaptureData
     public int CubemapSize;
     public float AverageBrightness;
     public float Brightness;
-    public byte[]? FullHDRCapturedData;
+    [JsonIgnore] public byte[]? FullHDRCapturedData;
     public FPackageIndex? EncodedCaptureData;
+
+    public FReflectionCaptureData() { }
 
     public FReflectionCaptureData(FAssetArchive Ar)
     {
@@ -158,6 +153,12 @@ public class FReflectionCaptureData
 
         //FullHDRCapturedData = Ar.ReadArray<byte>(); // Can also be stripped, but still a byte[]
         Ar.SkipFixedArray(1); // Skip for now
+        if (Ar.Game is EGame.GAME_FinalFantasy7Rebirth or EGame.GAME_ArenaBreakoutInfinite) Ar.Position += 4;
+        if (Ar.Game == EGame.GAME_HogwartsLegacy)
+        {
+            Ar.SkipMultipleFixedArrays(Ar.Read<int>(), 1);
+            Ar.SkipMultipleFixedArrays(Ar.Read<int>(), 1);
+        }
 
         if (FMobileObjectVersion.Get(Ar) >= FMobileObjectVersion.Type.StoreReflectionCaptureCompressedMobile &&
             FUE5ReleaseStreamObjectVersion.Get(Ar) < FUE5ReleaseStreamObjectVersion.Type.StoreReflectionCaptureEncodedHDRDataInRG11B10Format)
@@ -169,7 +170,7 @@ public class FReflectionCaptureData
             Ar.SkipFixedArray(1);
         }
 
-        if (Ar.Game == EGame.GAME_TheFirstDescendant) Ar.Position += 16;
+        if (Ar.Game == EGame.GAME_Valorant) Ar.SkipFixedArray(1);
         if (Ar.Game == EGame.GAME_BlackMythWukong)
         {
             Ar.SkipFixedArray(1);
@@ -187,23 +188,16 @@ public class FLightComponentMapBuildData
     {
         ShadowMapChannel = Ar.Read<int>();
         DepthMap = new FStaticShadowDepthMapData(Ar);
+        if (Ar.Game == EGame.GAME_TonyHawkProSkater34) Ar.Position += 76; // Identity Matrix + Zero Vector
     }
 }
 
-public class FStaticShadowDepthMapData
+public class FStaticShadowDepthMapData(FArchive Ar)
 {
-    public FMatrix WorldToLight;
-    public int ShadowMapSizeX;
-    public int ShadowMapSizeY;
-    public FFloat16[]? DepthSamples;
-
-    public FStaticShadowDepthMapData(FArchive Ar)
-    {
-        WorldToLight = new FMatrix(Ar);
-        ShadowMapSizeX = Ar.Read<int>();
-        ShadowMapSizeY = Ar.Read<int>();
-        DepthSamples = Ar.ReadArray(() => new FFloat16(Ar));
-    }
+    public FMatrix WorldToLight = new FMatrix(Ar);
+    public int ShadowMapSizeX = Ar.Read<int>();
+    public int ShadowMapSizeY = Ar.Read<int>();
+    public FFloat16[] DepthSamples = Ar.ReadArray(() => new FFloat16(Ar));
 }
 
 public class FVolumeLightingSample
@@ -214,13 +208,14 @@ public class FVolumeLightingSample
     public FColor PackedSkyBentNormal;
     public float DirectionalLightShadowing;
 
-    public FVolumeLightingSample(FAssetArchive Ar)
+    public FVolumeLightingSample(FArchive Ar, int order)
     {
         Position = Ar.Read<FVector>();
         Radius = Ar.Read<float>();
-        Lighting = Ar.ReadArray(3, () => Ar.ReadArray<float>(9));
+        Lighting = Ar.ReadArray(3, () => Ar.ReadArray<float>(order*order));
         PackedSkyBentNormal = Ar.Read<FColor>();
         DirectionalLightShadowing = Ar.Read<float>();
+        if (Ar.Game is EGame.GAME_RocoKingdomWorld) Ar.Position += 116;
     }
 }
 
@@ -229,31 +224,34 @@ public class FPrecomputedLightVolumeData
     public FBox Bounds;
     public float SampleSpacing;
     public int NumSHSamples;
-    public FVolumeLightingSample[] HighQualitySamples;
-    public FVolumeLightingSample[]? LowQualitySamples;
+    public FVolumeLightingSample[] HighQualitySamples = [];
+    public FVolumeLightingSample[] LowQualitySamples = [];
 
-    public FPrecomputedLightVolumeData(FAssetArchive Ar)
+    public FPrecomputedLightVolumeData(FAssetArchive Ar, bool readbValid = true)
     {
-        var bValid = Ar.ReadBoolean();
+        if (readbValid && !Ar.ReadBoolean()) return;
 
-        if (bValid)
+        var bVolumeInitialized = Ar.ReadBoolean();
+        if (bVolumeInitialized)
         {
-            var bVolumeInitialized = Ar.ReadBoolean();
-            if (bVolumeInitialized)
+            Bounds = new FBox(Ar);
+            SampleSpacing = Ar.Read<float>();
+            NumSHSamples = 4;
+            if (FRenderingObjectVersion.Get(Ar) >= FRenderingObjectVersion.Type.IndirectLightingCache3BandSupport)
             {
-                Bounds = new FBox(Ar);
-                SampleSpacing = Ar.Read<float>();
-                NumSHSamples = 4;
-                if (FRenderingObjectVersion.Get(Ar) >= FRenderingObjectVersion.Type.IndirectLightingCache3BandSupport)
-                {
-                    NumSHSamples = Ar.Read<int>();
-                }
+                NumSHSamples = Ar.Read<int>();
+            }
 
-                HighQualitySamples = Ar.ReadArray(() => new FVolumeLightingSample(Ar));
-                if (Ar.Ver >= EUnrealEngineObjectUE4Version.VOLUME_SAMPLE_LOW_QUALITY_SUPPORT)
-                {
-                    LowQualitySamples = Ar.ReadArray(() => new FVolumeLightingSample(Ar));
-                }
+            HighQualitySamples = Ar.ReadArray(() => new FVolumeLightingSample(Ar, NumSHSamples is 9 ? 3 : 2));
+            if (Ar.Ver >= EUnrealEngineObjectUE4Version.VOLUME_SAMPLE_LOW_QUALITY_SUPPORT)
+            {
+                LowQualitySamples = Ar.ReadArray(() => new FVolumeLightingSample(Ar, NumSHSamples is 9 ? 3 : 2));
+            }
+
+            if (Ar.Game is EGame.GAME_RocoKingdomWorld)
+            {
+                Ar.Position += 20;
+                Ar.SkipMultipleFixedArrays([4, 144]);
             }
         }
     }
@@ -313,6 +311,8 @@ public class FPrecomputedVolumetricLightmapData
                 SubLevelBrickPositions = Ar.ReadArray<FIntVector>();
                 IndirectionTextureOriginalValues = Ar.ReadArray<FColor>();
             }
+
+            if (Ar.Game == EGame.GAME_SplitFiction) Ar.Position += 8;
         }
     }
 }
@@ -332,16 +332,10 @@ public class FVolumetricLightmapBrickLayer : FVolumetricLightmapBasicBrickDataLa
     public FVolumetricLightmapDataLayer? LQLightDirection;
 }
 
-public class FVolumetricLightmapDataLayer
+public class FVolumetricLightmapDataLayer(FArchive Ar)
 {
-    public byte[] Data;
-    public string PixelFormatString;
-
-    public FVolumetricLightmapDataLayer(FArchive Ar)
-    {
-        Data = Ar.ReadArray<byte>();
-        PixelFormatString = Ar.ReadFString();
-    }
+    public byte[] Data = Ar.ReadArray<byte>();
+    public string PixelFormatString = Ar.ReadFString();
 }
 
 [JsonConverter(typeof(FMeshMapBuildDataConverter))]
@@ -352,32 +346,31 @@ public class FMeshMapBuildData
     public FGuid[] IrrelevantLights;
     public FPerInstanceLightmapData[] PerInstanceLightmapData;
 
+    public FMeshMapBuildData()
+    {
+        IrrelevantLights = [];
+        PerInstanceLightmapData = [];
+    }
+
     public FMeshMapBuildData(FAssetArchive Ar)
     {
-        var LightMapType = Ar.Read<ELightMapType>();
-        switch (LightMapType)
+        LightMap = Ar.Read<ELightMapType>() switch
         {
-            case ELightMapType.LMT_None:
-                LightMap = null;
-                break;
-            case ELightMapType.LMT_1D:
-                LightMap = new FLegacyLightMap1D(Ar);
-                break;
-            case ELightMapType.LMT_2D:
-                LightMap = new FLightMap2D(Ar);
-                break;
-        }
+            ELightMapType.LMT_1D => new FLegacyLightMap1D(Ar),
+            ELightMapType.LMT_2D => new FLightMap2D(Ar),
+            (ELightMapType)3 when Ar.Game == EGame.GAME_ArenaBreakoutInfinite && Ar.ReadBytes(24).Length == 24 => null,
+            _ => null
+        };
 
-        var ShadowMapType = Ar.Read<EShadowMapType>();
-        switch (ShadowMapType)
+        if (Ar.Game == EGame.GAME_ArenaBreakoutInfinite) Ar.Position += Ar.Read<int>() == 2 ? 156 : 4; // FTransferLightMap
+        if (Ar.Game is EGame.GAME_DarkPicturesAnthologyManofMedan or EGame.GAME_DarkPicturesAnthologyLittleHope or
+            EGame.GAME_TheQuarry && LightMap is not null) Ar.Position += 4;
+
+        ShadowMap = Ar.Read<EShadowMapType>() switch
         {
-            case EShadowMapType.SMT_None:
-                ShadowMap = null;
-                break;
-            case EShadowMapType.SMT_2D:
-                ShadowMap = new FShadowMap2D(Ar);
-                break;
-        }
+            EShadowMapType.SMT_2D => new FShadowMap2D(Ar),
+            _ => null
+        };
 
         IrrelevantLights = Ar.ReadArray<FGuid>();
         PerInstanceLightmapData = Ar.ReadBulkArray<FPerInstanceLightmapData>();
@@ -389,16 +382,13 @@ public enum ELightMapType : uint
     LMT_None = 0,
     LMT_1D = 1,
     LMT_2D = 2,
-};
-public class FLightMap
-{
-    public readonly FGuid[] LightGuids;
-
-    public FLightMap(FAssetArchive Ar)
-    {
-        LightGuids = Ar.ReadArray<FGuid>();
-    }
 }
+
+public class FLightMap(FAssetArchive Ar)
+{
+    public FGuid[] LightGuids = Ar.ReadArray<FGuid>();
+}
+
 public class FLegacyLightMap1D : FLightMap
 {
     public FLegacyLightMap1D(FAssetArchive Ar) : base(Ar)
@@ -457,18 +447,21 @@ public class FLightMap2D : FLightMap
                 }
             }
 
+            if (Ar.Game is EGame.GAME_RocoKingdomWorld) Ar.Position += 72;
+
             for (var CoefficientIndex = 0; CoefficientIndex < NUM_STORED_LIGHTMAP_COEF; CoefficientIndex++)
             {
                 ScaleVectors[CoefficientIndex] = Ar.Read<FVector4>();
                 AddVectors[CoefficientIndex] = Ar.Read<FVector4>();
             }
         }
+
         CoordinateScale = new FVector2D(Ar);
         CoordinateBias = new FVector2D(Ar);
 
         if (FRenderingObjectVersion.Get(Ar) >= FRenderingObjectVersion.Type.LightmapHasShadowmapData)
         {
-            bShadowChannelValid = Ar.ReadArray(4, () => Ar.ReadBoolean());
+            bShadowChannelValid = Ar.ReadArray(4, Ar.ReadBoolean);
             InvUniformPenumbraSize = Ar.Read<FVector4>();
         }
 
@@ -491,6 +484,9 @@ public class FLightMap2D : FLightMap
                 VirtualTextures[0] = new FPackageIndex(Ar);
             }
         }
+
+        if (Ar.Game is EGame.GAME_RacingMaster) Ar.Position += 20;
+        if (Ar.Game is EGame.GAME_MetroAwakening) Ar.Position += 4;
     }
 }
 
@@ -498,15 +494,11 @@ public enum EShadowMapType : uint
 {
     SMT_None = 0,
     SMT_2D = 2,
-};
-public class FShadowMap
-{
-    public readonly FGuid[] LightGuids;
+}
 
-    public FShadowMap(FAssetArchive Ar)
-    {
-        LightGuids = Ar.ReadArray<FGuid>();
-    }
+public class FShadowMap(FAssetArchive Ar)
+{
+    public readonly FGuid[] LightGuids = Ar.ReadArray<FGuid>();
 }
 
 public class FShadowMap2D : FShadowMap
@@ -531,8 +523,9 @@ public class FShadowMap2D : FShadowMap
         else
         {
             const float LegacyValue = 1.0f / .05f;
-            InvUniformPenumbraSize = new FVector4(LegacyValue, LegacyValue, LegacyValue, LegacyValue);
+            InvUniformPenumbraSize = new FVector4(LegacyValue);
         }
+        if (Ar.Game == EGame.GAME_Snowbreak) Ar.Position += 20;
     }
 }
 

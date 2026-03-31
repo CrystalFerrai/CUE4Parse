@@ -24,12 +24,14 @@ namespace CUE4Parse.UE4.AssetRegistry.Objects
         public readonly FNumberlessExportPath[] NumberlessExportPaths;
         public readonly FAssetRegistryExportPath[] ExportPaths;
         public readonly string[] Texts;
-        
+
         public readonly FNameEntrySerialized[] NameMap;
-        
+
         public FStore(FAssetRegistryReader Ar)
         {
             NameMap = Ar.NameMap;
+            Ar.AlignPosInArchive();
+            
             var magic = Ar.Read<uint>();
             var order = GetLoadOrder(magic);
             var nums = Ar.ReadArray<int>(11);
@@ -37,12 +39,20 @@ namespace CUE4Parse.UE4.AssetRegistry.Objects
             if (order == ELoadOrder.TextFirst)
             {
                 Ar.Position += 4;
+                Ar.AlignPosInArchive();
                 Texts = Ar.ReadArray(nums[4], Ar.ReadFString);
             }
 
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             NumberlessNames = Ar.ReadArray(nums[0], Ar.Read<uint>);
+            
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             Names = Ar.ReadArray(nums[1], Ar.ReadFName);
+            
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             NumberlessExportPaths = Ar.ReadArray(nums[2], () => new FNumberlessExportPath(Ar));
+            
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             ExportPaths = Ar.ReadArray(nums[3], () => new FAssetRegistryExportPath(Ar));
 
             if (order == ELoadOrder.Member)
@@ -50,15 +60,26 @@ namespace CUE4Parse.UE4.AssetRegistry.Objects
                 Texts = Ar.ReadArray(nums[4], Ar.ReadFString);
             }
 
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             AnsiStringOffsets = Ar.ReadArray(nums[5], Ar.Read<uint>);
-            WideStringOffsets = Ar.ReadArray(nums[6], Ar.Read<uint>);
-            AnsiStrings = Ar.ReadBytes(nums[7]);
-            WideStrings = Ar.ReadBytes(nums[8] * 2);
             
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
+            WideStringOffsets = Ar.ReadArray(nums[6], Ar.Read<uint>);
+            
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
+            AnsiStrings = Ar.ReadBytes(nums[7]);
+            
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
+            WideStrings = Ar.ReadBytes(nums[8] * 2);
+
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             NumberlessPairs = Ar.ReadArray(nums[9], () => new FNumberlessPair(Ar));
+            
+            if (order == ELoadOrder.TextFirst) Ar.AlignPosInArchive();
             Pairs = Ar.ReadArray(nums[10], () => new FNumberedPair(Ar));
 
-            Ar.Position += 4; // _END_MAGIC
+            if (Ar.Read<uint>() != _END_MAGIC)
+                throw new ParserException(Ar, "Invalid FStore EndMagic");
         }
 
         public string GetAnsiString(int index)
@@ -68,7 +89,7 @@ namespace CUE4Parse.UE4.AssetRegistry.Objects
             while (AnsiStrings[offset + length] != 0) ++length;
             return Encoding.UTF8.GetString(AnsiStrings, (int)offset, length);
         }
-        
+
         public string GetWideString(int index)
         {
             var offset = WideStringOffsets[index];
@@ -87,7 +108,7 @@ namespace CUE4Parse.UE4.AssetRegistry.Objects
             };
         }
     }
-    
+
     public static class FPartialMapHandle
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -103,7 +124,7 @@ namespace CUE4Parse.UE4.AssetRegistry.Objects
         public readonly FStore Store;
         public readonly ushort Num;
         public readonly uint PairBegin;
-        
+
         public FMapHandle(bool hasNumberlessKeys, FStore store, ushort num, uint pairBegin)
         {
             bHasNumberlessKeys = hasNumberlessKeys;

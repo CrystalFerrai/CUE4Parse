@@ -2,11 +2,15 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using CUE4Parse.GameTypes.Borderlands4.Assets.Objects.Properties;
 using CUE4Parse.GameTypes.FN.Assets.Exports;
+using CUE4Parse.GameTypes.OuterWorlds2.Properties;
+using CUE4Parse.GameTypes.OuterWorlds2.Readers;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Readers;
 using CUE4Parse.UE4.Assets.Utils;
 using CUE4Parse.UE4.Objects.UObject;
+using CUE4Parse.UE4.Versions;
 using CUE4Parse.Utils;
 using Newtonsoft.Json;
 using Serilog;
@@ -18,12 +22,14 @@ public enum ReadType : byte
     ZERO,
     NORMAL,
     MAP,
-    ARRAY
+    ARRAY,
+    OPTIONAL,
+    RAW,
 }
 
 public abstract class FPropertyTagType<T> : FPropertyTagType
 {
-    public T? Value { get; protected set; }
+    public T? Value { get; internal set; }
 
     public override object? GenericValue => Value;
 
@@ -37,10 +43,13 @@ public abstract class FPropertyTagType
     public object? GetValue(Type type)
     {
         var generic = GenericValue;
+
+        type = Nullable.GetUnderlyingType(type) ?? type;
         if (type.IsInstanceOfType(generic))
         {
             return generic;
         }
+
         switch (this)
         {
             case FPropertyTagType<FScriptStruct> structProp when type.IsInstanceOfType(structProp.Value!.StructType):
@@ -48,28 +57,13 @@ public abstract class FPropertyTagType
             case FPropertyTagType<FScriptStruct> {Value.StructType: FStructFallback fallback} when type.GetCustomAttribute<StructFallback>() != null:
                 return fallback.MapToClass(type);
             case FPropertyTagType<UScriptArray> arrayProp when type.IsArray:
-            {
-                var array = arrayProp.Value!.Properties;
-                var contentType = type.GetElementType()!;
-                var result = Array.CreateInstance(contentType, array.Count);
-                for (var i = 0; i < array.Count; i++)
-                {
-                    result.SetValue(array[i].GetValue(contentType), i);
-                }
-                return result;
-            }
+                return CreateArray(type, arrayProp.Value!.Properties);
+            case FPropertyTagType<UScriptSet> setProp when type.IsArray:
+                return CreateArray(type, setProp.Value!.Properties);
             case FPropertyTagType<UScriptArray> arrayProp when typeof(IList).IsAssignableFrom(type):
-            {
-                var array = arrayProp.Value!.Properties;
-                var contentType = type.GenericTypeArguments[0];
-                var listType = typeof(List<>).MakeGenericType(contentType);
-                var result = (IList) Activator.CreateInstance(listType, array.Count)!;
-                foreach (var element in array)
-                {
-                    result.Add(element.GetValue(contentType));
-                }
-                return result;
-            }
+                return CreateList(type, arrayProp.Value!.Properties);
+            case FPropertyTagType<UScriptSet> setProp when typeof(IList).IsAssignableFrom(type):
+                return CreateList(type, setProp.Value!.Properties);
             case FPropertyTagType<FPackageIndex> objProp when typeof(UObject).IsAssignableFrom(type):
                 if (objProp.Value!.TryLoad(out var objExport) && type.IsInstanceOfType(objExport))
                     return objExport;
@@ -93,6 +87,29 @@ public abstract class FPropertyTagType
         }
     }
 
+    private Array CreateArray(Type type, List<FPropertyTagType> properties)
+    {
+        var contentType = type.GetElementType()!;
+        var result = Array.CreateInstance(contentType, properties.Count);
+        for (var i = 0; i < properties.Count; i++)
+        {
+            result.SetValue(properties[i].GetValue(contentType), i);
+        }
+        return result;
+    }
+
+    private IList CreateList(Type type, List<FPropertyTagType> properties)
+    {
+        var contentType = type.GenericTypeArguments[0];
+        var listType = typeof(List<>).MakeGenericType(contentType);
+        var result = (IList) Activator.CreateInstance(listType, properties.Count)!;
+        foreach (var element in properties)
+        {
+            result.Add(element.GetValue(contentType));
+        }
+        return result;
+    }
+
     public T? GetValue<T>()
     {
         return (T?) GetValue(typeof(T));
@@ -100,11 +117,11 @@ public abstract class FPropertyTagType
 
     public abstract override string ToString();
 
-    internal static FPropertyTagType? ReadPropertyTagType(FAssetArchive Ar, string propertyType, FPropertyTagData? tagData, ReadType type)
+    internal static FPropertyTagType? ReadPropertyTagType(FAssetArchive Ar, string propertyType, FPropertyTagData? tagData, ReadType type, int size = 0)
     {
         var tagType = propertyType switch
         {
-            "ArrayProperty" => new ArrayProperty(Ar, tagData, type),
+            "ArrayProperty" => new ArrayProperty(Ar, tagData, type, size),
             "AssetObjectProperty" => new AssetObjectProperty(Ar, type),
             "AssetClassProperty" => new AssetObjectProperty(Ar, type),
             "BoolProperty" => new BoolProperty(Ar, tagData, type),
@@ -128,11 +145,17 @@ public abstract class FPropertyTagType
             "MulticastInlineDelegateProperty" => new MulticastInlineDelegateProperty(Ar, type),
             "MulticastSparseDelegateProperty" => new MulticastSparseDelegateProperty(Ar, type),
             "NameProperty" => new NameProperty(Ar, type),
-            "ObjectProperty" => Ar is FLevelSaveRecordArchive ? new AssetObjectProperty(Ar, type) : new ObjectProperty(Ar, type), // ObjectProperty but serialized as string
+            "ObjectProperty" => Ar switch
+                {
+                    FLevelSaveRecordArchive => new AssetObjectProperty(Ar, type), // ObjectProperty but serialized as string
+                    FOW2ObjectsArchive OW2Ar => new FOW2ObjectProperty(OW2Ar, type),
+                    _ => new ObjectProperty(Ar, type),
+                },
             "SetProperty" => new SetProperty(Ar, tagData, type),
             "SoftClassProperty" => new SoftObjectProperty(Ar, type),
             "SoftObjectProperty" => new SoftObjectProperty(Ar, type),
             "StrProperty" => new StrProperty(Ar, type),
+            "Utf8StrProperty" => new Utf8StrProperty(Ar, type),
             "StructProperty" => new StructProperty(Ar, tagData, type),
             "TextProperty" => new TextProperty(Ar, type),
             "UInt16Property" => new UInt16Property(Ar, type),
@@ -141,8 +164,13 @@ public abstract class FPropertyTagType
             "WeakObjectProperty" => new WeakObjectProperty(Ar, type),
             "OptionalProperty" => new OptionalProperty(Ar, tagData, type),
             "VerseStringProperty" => new VerseStringProperty(Ar, type),
-            "VerseFunctionProperty" => null,
+            "VerseFunctionProperty" => new ObjectProperty(Ar, type),
             "VerseDynamicProperty" => new ObjectProperty(Ar, type), // idk, but for now read as ObjectProperty
+            "VerseClassProperty" => new VerseClassProperty(Ar, type),
+
+            "CustomProperty_FD" or "GbxDefPtrProperty" when Ar.Game == EGame.GAME_Borderlands4 => new GbxDefPtrProperty(Ar, type),
+            "CustomProperty_FE" or "GameDataHandleProperty" when Ar.Game == EGame.GAME_Borderlands4 => new GameDataHandleProperty(Ar, type),
+
             _ => null
         };
 #if DEBUG
