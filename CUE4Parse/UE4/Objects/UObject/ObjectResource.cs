@@ -229,7 +229,8 @@ namespace CUE4Parse.UE4.Objects.UObject
         public int CreateBeforeCreateDependencies;
         public long ScriptSerializationStartOffset;
         public long ScriptSerializationEndOffset;
-        public ulong? PublicExportHash;
+		public Lazy<UExport> ExportObject;
+		public ulong? PublicExportHash;
 
         public string ClassName;
 

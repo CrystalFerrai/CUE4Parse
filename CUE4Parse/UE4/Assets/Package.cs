@@ -213,6 +213,7 @@ namespace CUE4Parse.UE4.Assets
                         obj.PostLoad();
                         return obj;
                     });
+                    export.ExportObject = ExportsLazy[i];
                 }
             }
             else
@@ -396,7 +397,8 @@ namespace CUE4Parse.UE4.Assets
                     return _object;
                 });
                 package.ExportsLazy[index] = Lazy;
-            }
+				_export.ExportObject = Lazy;
+			}
 
             private void EnsureDependencies()
             {
