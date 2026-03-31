@@ -32,7 +32,7 @@ public class FKismetArchive : FArchive
     public KismetExpression ReadExpression()
     {
         var index = Index;
-        EExprToken token = (EExprToken)Read<byte>();
+        var token = (EExprToken)Read<byte>();
         KismetExpression expression = token switch
         {
             EExprToken.EX_LocalVariable => new EX_LocalVariable(this),
@@ -177,7 +177,7 @@ public class FKismetArchive : FArchive
     public KismetExpression[] ReadExpressionArray(EExprToken endToken)
     {
         var newData = new List<KismetExpression>();
-        KismetExpression currExpression = null;
+        KismetExpression? currExpression = null;
         while (currExpression == null || currExpression.Token != endToken)
         {
             if (currExpression != null) newData.Add(currExpression);
@@ -191,7 +191,11 @@ public class FKismetArchive : FArchive
     public override FName ReadFName()
     {
         var nameIndex = Read<int>();
-        var extraIndex = Read<int>();
+        var extraIndex = 0;
+        if (Ver >= EUnrealEngineObjectUE3Version.FNAME_CHANGE_NAME_SPLIT)
+        {
+            extraIndex = Read<int>();
+        }
         Index += 4;
 #if !NO_FNAME_VALIDATION
         if (nameIndex < 0 || nameIndex >= Owner.NameMap.Length)

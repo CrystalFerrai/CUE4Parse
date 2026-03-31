@@ -15,6 +15,7 @@ using CUE4Parse.UE4.Assets;
 using CUE4Parse.UE4.Assets.Exports;
 using CUE4Parse.UE4.Assets.Exports.Internationalization;
 using CUE4Parse.UE4.Assets.Objects;
+using CUE4Parse.UE4.IO;
 using CUE4Parse.UE4.IO.Objects;
 using CUE4Parse.UE4.Objects.Core.Misc;
 using CUE4Parse.UE4.Objects.Engine;
@@ -46,7 +47,9 @@ namespace CUE4Parse.FileProvider
 
         public VersionContainer Versions { get; }
         public StringComparer PathComparer { get; }
+        public StringComparison StringComparison { get; }
 
+        public IoStoreOnDemandOptions? OnDemandOptions { get; set; }
         public FileProviderDictionary Files { get; }
         public InternationalizationDictionary Internationalization { get; }
         public IDictionary<string, string> VirtualPaths { get; }
@@ -69,6 +72,7 @@ namespace CUE4Parse.FileProvider
         {
             Versions = versions ?? VersionContainer.DEFAULT_VERSION_CONTAINER;
             PathComparer = pathComparer ?? StringComparer.Ordinal;
+            StringComparison = PathComparer.ToComparison();
 
             Files = new FileProviderDictionary();
             Internationalization = new InternationalizationDictionary(PathComparer);
@@ -749,7 +753,7 @@ namespace CUE4Parse.FileProvider
             ArgumentException.ThrowIfNullOrEmpty("objectName", pathName.Item2);
 
             var package = LoadPackage(pathName.Item1);
-            return package.GetExport<T>(pathName.Item2);
+            return package.GetExport<T>(pathName.Item2, StringComparison);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -770,7 +774,7 @@ namespace CUE4Parse.FileProvider
             ArgumentException.ThrowIfNullOrEmpty("objectName", pathName.Item2);
 
             var package = await LoadPackageAsync(pathName.Item1).ConfigureAwait(false);
-            return package.GetExport<T>(pathName.Item2);
+            return package.GetExport<T>(pathName.Item2, StringComparison);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
