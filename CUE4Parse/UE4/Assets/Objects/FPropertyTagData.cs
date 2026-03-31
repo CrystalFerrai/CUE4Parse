@@ -29,7 +29,18 @@ public class FPropertyTagData
     {
         Name = name;
         Type = type;
-        switch (type)
+
+        // HACK: Need to be able to read these properties from the game Soulmask
+        if (Name.Equals("QuYuChuanSongMenIocnMap"))
+        {
+            InnerTypeData = new("Guid");
+        }
+		if (Name.Equals("DongWuConfigExMap"))
+		{
+            InnerTypeData = new("SoftClassPath");
+		}
+
+		switch (type)
         {
             case "StructProperty":
                 StructType = Ar.ReadFName().Text;
